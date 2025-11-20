@@ -257,12 +257,64 @@ export const editGameAsset = async (image: File, mask: File | null, instruction:
 
 // --- VFX & Tech Art Services ---
 
+export interface VfxParams {
+    type: string;
+    category: 'noise' | 'cookie';
+    scale?: string; // for noise
+    contrast?: string; // for noise
+    complexity?: string; // for noise
+    edge?: string; // for cookie
+    aperture?: string; // for cookie
+    vibe?: string; // for cookie
+}
+
+export const generateVfxAsset = async (params: VfxParams, quality: 'draft' | 'pro'): Promise<string> => {
+    let prompt = "";
+    let techSpecs = "";
+
+    if (params.category === 'noise') {
+        prompt = `Seamless tileable ${params.type} noise texture. `;
+        prompt += `Scale: ${params.scale || 'Standard'}. `;
+        prompt += `Contrast: ${params.contrast || 'High'}. `;
+        prompt += `Complexity: ${params.complexity || 'Standard'}. `;
+        techSpecs = "Technical requirements: Grayscale heightmap, mathematical procedural pattern, flat lighting, no shading, square 1:1. Suitable for VFX shaders.";
+    } else {
+        prompt = `Light cookie texture (gobo) pattern: ${params.type}. `;
+        prompt += `Aperture Shape: ${params.aperture || 'Square'}. `;
+        prompt += `Edge Softness: ${params.edge || 'Sharp'}. `;
+        prompt += `Cleanliness: ${params.vibe || 'Clean'}. `;
+        techSpecs = "Technical requirements: High contrast Black and White only. Pure black background (blocks light), White shapes (allows light). Defines shadow projection.";
+        
+        // Force specific constraint for flashlights to ensure they work
+        if (params.aperture === 'Circular (Flashlight)') {
+            techSpecs += " MUST be a circular beam in the center of a black square. Edges must fade to black.";
+        }
+    }
+
+    if (quality === 'draft') {
+        // Fast generation with Gemini Flash Image
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: { parts: [{ text: `Generate a preview texture: ${prompt} ${techSpecs}` }] },
+            config: { responseModalities: [Modality.IMAGE] },
+        });
+        
+        const firstPart = response.candidates?.[0]?.content?.parts?.[0];
+        if (firstPart?.inlineData) {
+            return `data:${firstPart.inlineData.mimeType};base64,${firstPart.inlineData.data}`;
+        }
+        throw new Error("Draft generation failed.");
+    } else {
+        // Professional generation with Imagen
+        return generateProfessionalAsset(prompt, params.category, 'Technical Art', '1:1');
+    }
+};
+
+// Deprecated simple wrappers kept for compatibility if needed, but UI now uses generateVfxAsset
 export const generateNoiseTexture = async (noiseType: string): Promise<string> => {
-    const prompt = `Seamless tileable ${noiseType} noise texture. Technical requirements: Grayscale heightmap, high contrast, mathematical procedural pattern, flat lighting, no shading, 4k resolution. Suitable for VFX shaders and displacement maps.`;
-    return generateProfessionalAsset(prompt, 'noise', 'Procedural Math', '1:1');
+    return generateVfxAsset({ type: noiseType, category: 'noise' }, 'pro');
 };
 
 export const generateLightCookie = async (cookieType: string): Promise<string> => {
-    const prompt = `Light cookie texture (gobo) pattern: ${cookieType}. Technical requirements: High contrast Black and White only. Pure black background (blocks light), White shapes (allows light). Sharp defined edges for shadow projection. Viewed from front, flat projection.`;
-    return generateProfessionalAsset(prompt, 'cookie', 'Light Cookie / Gobo', '1:1');
+    return generateVfxAsset({ type: cookieType, category: 'cookie' }, 'pro');
 };

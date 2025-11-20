@@ -7,8 +7,7 @@ import {
     analyzeForEngine,
     extractUiStyle,
     generateUiComponent,
-    generateNoiseTexture,
-    generateLightCookie,
+    generateVfxAsset,
     AnalysisReport
 } from './services/geminiService';
 
@@ -523,37 +522,67 @@ const TextureForge: React.FC<{ onSave: (asset: Asset) => void }> = ({ onSave }) 
     );
 }
 
-// 6. VFX & Lighting Studio
+// 6. VFX & Lighting Studio (Overhauled for Modularity)
 const VFXStudio: React.FC<{ onSave: (asset: Asset) => void }> = ({ onSave }) => {
     const [mode, setMode] = useState<'noise' | 'cookie'>('noise');
-    const [selectedType, setSelectedType] = useState('');
+    const [selectedType, setSelectedType] = useState('Perlin Noise');
     const [loading, setLoading] = useState(false);
     const [result, setResult] = useState<string | null>(null);
+    const [isDraft, setIsDraft] = useState(false);
 
-    // Options
-    const noiseTypes = ["Perlin Noise", "Voronoi / Cellular", "Simplex Noise", "White Noise (Static)", "Value Noise", "Curl Noise", "Caustics Water"];
-    const cookieTypes = ["Venetian Blinds", "Tree Foliage Shadows", "Window Frame (Cross)", "Jail Bars", "Industrial Grate", "Softbox Gradient", "Abstract Caustics", "Flashlight Soft"];
+    // Modules / Parameters
+    // Noise Params
+    const [scale, setScale] = useState('Standard');
+    const [contrast, setContrast] = useState('High');
+    const [complexity, setComplexity] = useState('Standard');
+    // Cookie Params
+    const [edge, setEdge] = useState('Sharp');
+    const [aperture, setAperture] = useState('Square');
+    const [vibe, setVibe] = useState('Clean');
+
+    const noiseTypes = ["Perlin Noise", "Voronoi / Cellular", "Simplex Noise", "White Noise (Static)", "Curl Noise", "Caustics Water"];
+    const cookieTypes = ["Venetian Blinds", "Tree Foliage", "Window Frame", "Industrial Grate", "Abstract Caustics", "Flashlight"];
 
     useEffect(() => {
-        setSelectedType(mode === 'noise' ? noiseTypes[0] : cookieTypes[0]);
+        // Reset defaults when mode changes
+        if (mode === 'noise') {
+            setSelectedType(noiseTypes[0]);
+        } else {
+            setSelectedType(cookieTypes[0]);
+            // Smart defaults for cookie types
+            if (cookieTypes[0] === 'Flashlight') setAperture('Circular (Flashlight)');
+        }
         setResult(null);
     }, [mode]);
 
-    const handleGenerate = async () => {
+    // Auto-set aperture for Flashlight type
+    useEffect(() => {
+        if (selectedType === 'Flashlight') setAperture('Circular (Flashlight)');
+        else if (mode === 'cookie' && aperture === 'Circular (Flashlight)') setAperture('Square');
+    }, [selectedType]);
+
+    const handleGenerate = async (quality: 'draft' | 'pro') => {
         setLoading(true);
+        setIsDraft(quality === 'draft');
         try {
-            let url;
-            if (mode === 'noise') url = await generateNoiseTexture(selectedType);
-            else url = await generateLightCookie(selectedType);
+            const url = await generateVfxAsset({
+                type: selectedType,
+                category: mode,
+                scale, contrast, complexity, // noise params
+                edge, aperture, vibe // cookie params
+            }, quality);
             
             setResult(url);
-            onSave({ 
-                id: Date.now().toString(), 
-                type: mode, 
-                url, 
-                prompt: `[${mode === 'noise' ? 'Noise' : 'Gobo'}] ${selectedType}`, 
-                createdAt: new Date() 
-            });
+            // Only auto-save PRO assets to library, not drafts
+            if (quality === 'pro') {
+                onSave({ 
+                    id: Date.now().toString(), 
+                    type: mode, 
+                    url, 
+                    prompt: `[${mode} - ${selectedType}] ${quality === 'pro' ? 'Final' : 'Draft'}`, 
+                    createdAt: new Date() 
+                });
+            }
         } catch (e) { alert(e); } 
         finally { setLoading(false); }
     };
@@ -562,40 +591,129 @@ const VFXStudio: React.FC<{ onSave: (asset: Asset) => void }> = ({ onSave }) => 
         <div className="flex flex-col lg:flex-row gap-6 h-full">
             <div className="lg:w-1/3 flex-shrink-0 flex flex-col gap-6 overflow-y-auto pr-2">
                 <div>
-                    <h2 className="text-3xl font-display font-bold text-white mb-2">VFX & Lighting Lab</h2>
-                    <p className="text-gray-400 text-sm">Generate technical maps and light masks.</p>
+                    <h2 className="text-3xl font-display font-bold text-white mb-2">VFX Lab 2.0</h2>
+                    <p className="text-gray-400 text-sm">Modular generation with live draft preview.</p>
                 </div>
+                
                 <div className="flex gap-1 bg-gray-900 p-1 rounded-lg">
-                    <button onClick={() => setMode('noise')} className={`flex-1 py-2 text-xs font-bold uppercase rounded transition-all ${mode === 'noise' ? 'bg-fuchsia-600 text-white' : 'text-gray-400 hover:text-white'}`}>Noise Generator</button>
-                    <button onClick={() => setMode('cookie')} className={`flex-1 py-2 text-xs font-bold uppercase rounded transition-all ${mode === 'cookie' ? 'bg-fuchsia-600 text-white' : 'text-gray-400 hover:text-white'}`}>Light Cookies</button>
+                    <button onClick={() => setMode('noise')} className={`flex-1 py-2 text-xs font-bold uppercase rounded transition-all ${mode === 'noise' ? 'bg-fuchsia-600 text-white' : 'text-gray-400 hover:text-white'}`}>Math Noise</button>
+                    <button onClick={() => setMode('cookie')} className={`flex-1 py-2 text-xs font-bold uppercase rounded transition-all ${mode === 'cookie' ? 'bg-fuchsia-600 text-white' : 'text-gray-400 hover:text-white'}`}>Light Projection</button>
                 </div>
+
                 <div className="space-y-4 bg-game-panel p-6 rounded-2xl border border-gray-800 shadow-xl">
+                    {/* Base Type Selection */}
                     <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">{mode === 'noise' ? 'Pattern Type' : 'Projection Shape'}</label>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Base Pattern</label>
                         <select value={selectedType} onChange={(e) => setSelectedType(e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white">
                             {(mode === 'noise' ? noiseTypes : cookieTypes).map(t => <option key={t} value={t}>{t}</option>)}
                         </select>
                     </div>
-                    
-                    <div className="text-xs text-gray-400 p-3 bg-black/20 rounded border border-gray-700">
-                        {mode === 'noise' ? 'Generates seamless, high-contrast grayscale procedural noise maps suitable for shader math, erosion, and particle VFX.' : 'Generates high-contrast Black & White projection textures (Gobos) for Spotlights to create complex shadows.'}
+
+                    {/* Modular Controls - Dynamic based on Mode */}
+                    <div className="p-4 bg-black/20 rounded-lg border border-gray-700 space-y-4">
+                        <p className="text-[10px] font-bold text-fuchsia-400 uppercase tracking-widest mb-2 border-b border-gray-700 pb-1">Parameter Modules</p>
+                        
+                        {mode === 'noise' ? (
+                            <>
+                                <div>
+                                    <label className="flex justify-between text-xs text-gray-400 mb-1"><span>Scale / Zoom</span><span className="text-white">{scale}</span></label>
+                                    <input type="range" min="0" max="2" step="1" 
+                                        value={scale === 'Macro (Close)' ? 0 : scale === 'Standard' ? 1 : 2} 
+                                        onChange={(e) => {
+                                            const val = parseInt(e.target.value);
+                                            setScale(val === 0 ? 'Macro (Close)' : val === 1 ? 'Standard' : 'Micro (Far)');
+                                        }}
+                                        className="w-full accent-fuchsia-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="flex justify-between text-xs text-gray-400 mb-1"><span>Contrast</span><span className="text-white">{contrast}</span></label>
+                                    <select value={contrast} onChange={(e) => setContrast(e.target.value)} className="w-full bg-gray-900 border border-gray-600 rounded text-xs p-1">
+                                        <option value="Low (Soft)">Low (Soft)</option>
+                                        <option value="Standard">Standard</option>
+                                        <option value="High (Hard)">High (Hard)</option>
+                                        <option value="Binary (Black/White)">Binary (Black/White)</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="flex justify-between text-xs text-gray-400 mb-1"><span>Complexity</span><span className="text-white">{complexity}</span></label>
+                                    <select value={complexity} onChange={(e) => setComplexity(e.target.value)} className="w-full bg-gray-900 border border-gray-600 rounded text-xs p-1">
+                                        <option value="Simple">Simple</option>
+                                        <option value="Standard">Standard</option>
+                                        <option value="Chaotic">Chaotic</option>
+                                    </select>
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                <div>
+                                    <label className="flex justify-between text-xs text-gray-400 mb-1"><span>Aperture Shape</span><span className="text-white">{aperture.split(' ')[0]}</span></label>
+                                    <select value={aperture} onChange={(e) => setAperture(e.target.value)} className="w-full bg-gray-900 border border-gray-600 rounded text-xs p-1">
+                                        <option value="Square">Square (Window/General)</option>
+                                        <option value="Circular (Flashlight)">Circular (Flashlight)</option>
+                                        <option value="Irregular (Organic)">Irregular (Organic)</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="flex justify-between text-xs text-gray-400 mb-1"><span>Edge Softness</span><span className="text-white">{edge}</span></label>
+                                    <input type="range" min="0" max="2" step="1" 
+                                        value={edge === 'Razor Sharp' ? 0 : edge === 'Sharp' ? 1 : 2} 
+                                        onChange={(e) => {
+                                            const val = parseInt(e.target.value);
+                                            setEdge(val === 0 ? 'Razor Sharp' : val === 1 ? 'Sharp' : 'Soft/Diffused');
+                                        }}
+                                        className="w-full accent-fuchsia-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="flex justify-between text-xs text-gray-400 mb-1"><span>Style / Vibe</span><span className="text-white">{vibe}</span></label>
+                                    <select value={vibe} onChange={(e) => setVibe(e.target.value)} className="w-full bg-gray-900 border border-gray-600 rounded text-xs p-1">
+                                        <option value="Clean">Clean</option>
+                                        <option value="Dirty/Grungy">Dirty/Grungy</option>
+                                        <option value="Old/Damaged">Old/Damaged</option>
+                                    </select>
+                                </div>
+                            </>
+                        )}
                     </div>
 
-                    <button onClick={handleGenerate} disabled={loading} className="w-full py-4 bg-gradient-to-r from-fuchsia-600 to-purple-600 rounded-lg font-display font-bold text-white shadow-lg disabled:opacity-50">
-                        {loading ? <Spinner /> : 'GENERATE ASSET'}
-                    </button>
+                    <div className="grid grid-cols-2 gap-2 pt-2">
+                        <button onClick={() => handleGenerate('draft')} disabled={loading} className="py-3 bg-gray-700 hover:bg-gray-600 rounded-lg font-bold text-white text-sm transition-colors border border-gray-600">
+                            {loading && isDraft ? <Spinner /> : '⚡ LIVE PREVIEW'}
+                        </button>
+                        <button onClick={() => handleGenerate('pro')} disabled={loading} className="py-3 bg-gradient-to-r from-fuchsia-600 to-purple-600 rounded-lg font-bold text-white text-sm shadow-lg hover:shadow-fuchsia-500/20 transition-all">
+                            {loading && !isDraft ? <Spinner /> : 'RENDER FINAL'}
+                        </button>
+                    </div>
                 </div>
             </div>
             
             <div className="lg:w-2/3 bg-black/40 rounded-2xl border border-gray-800 flex items-center justify-center min-h-[400px]">
                  {result ? (
-                    <div className="relative flex flex-col items-center">
-                         <img src={result} className={`max-w-[500px] rounded shadow-2xl border border-gray-700 ${mode === 'cookie' ? 'bg-black' : ''}`} alt="VFX Asset" />
-                         <div className="mt-4 flex gap-4">
-                            <a href={result} download={`vfx-${Date.now()}.jpg`} className="px-4 py-2 bg-fuchsia-600 rounded font-bold text-white hover:bg-fuchsia-500">Download Map</a>
+                    <div className="relative flex flex-col items-center animate-in zoom-in-95 duration-300">
+                         <div className="relative">
+                             <img src={result} className={`max-w-[500px] rounded shadow-2xl border ${isDraft ? 'border-yellow-500/50' : 'border-gray-700'} ${mode === 'cookie' ? 'bg-black' : ''}`} alt="VFX Asset" />
+                             {isDraft && <div className="absolute top-2 right-2 bg-yellow-500/80 text-black px-2 py-1 rounded text-xs font-bold uppercase">Draft Preview</div>}
+                         </div>
+                         
+                         <div className="mt-4 flex gap-4 items-center">
+                            {isDraft ? (
+                                <div className="text-yellow-500 text-sm flex items-center gap-2">
+                                    <span>⚠️ Low Resolution Preview.</span>
+                                    <button onClick={() => handleGenerate('pro')} className="underline hover:text-white font-bold">Render Final</button>
+                                </div>
+                            ) : (
+                                <a href={result} download={`vfx-${Date.now()}.jpg`} className="px-6 py-2 bg-fuchsia-600 rounded font-bold text-white hover:bg-fuchsia-500 shadow-lg">Download 4K Asset</a>
+                            )}
                          </div>
                     </div>
-                ) : <div className="text-center opacity-30"><div className="text-8xl mb-4">💡</div><p className="font-display text-2xl tracking-widest">LABORATORY IDLE</p></div>}
+                ) : (
+                    <div className="text-center opacity-30">
+                        <div className="text-8xl mb-4">💡</div>
+                        <p className="font-display text-2xl tracking-widest">CONFIGURE MODULES</p>
+                        <p className="text-sm mt-2">Set parameters and click Preview</p>
+                    </div>
+                )}
             </div>
         </div>
     );
