@@ -1,12 +1,23 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { 
     generateProfessionalAsset, 
     editGameAsset, 
-    analyzeAssetForDev, 
-    brainstormGameMechanics,
-    generateConceptFromRef
+    extractTextureFromImage,
+    reverseEngineerPrompt,
+    analyzeForEngine,
+    extractUiStyle,
+    generateUiComponent,
+    AnalysisReport
 } from './services/geminiService';
+
+// --- Types ---
+interface Asset {
+    id: string;
+    type: 'logo' | 'banner' | 'texture' | 'edit' | 'ui' | 'remaster';
+    url: string;
+    prompt: string;
+    createdAt: Date;
+}
 
 // --- UI Components ---
 
@@ -22,18 +33,303 @@ const SidebarItem: React.FC<{
         ${active ? 'bg-game-accent text-white shadow-lg shadow-indigo-500/20' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}`}
     >
         <span className="text-xl group-hover:scale-110 transition-transform">{icon}</span>
-        <span className="font-display font-medium tracking-wide text-sm">{label}</span>
+        <span className="font-display font-medium tracking-wide text-sm text-left">{label}</span>
     </button>
 );
 
 const Spinner: React.FC = () => (
-    <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-game-accent"></div>
+    <div className="flex items-center justify-center gap-2 text-game-accent">
+        <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-current"></div>
+        <span className="font-bold font-display uppercase text-sm tracking-widest">Processing</span>
+    </div>
 );
 
 // --- Modules ---
 
-// 1. Logo Studio Module
-const LogoStudio = () => {
+// 1. The Inspector (Analysis & Remastering)
+const Inspector: React.FC<{ onSave: (asset: Asset) => void }> = ({ onSave }) => {
+    const [image, setImage] = useState<File | null>(null);
+    const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+    const [engine, setEngine] = useState('Unreal Engine 5');
+    const [loading, setLoading] = useState(false);
+    const [report, setReport] = useState<AnalysisReport | null>(null);
+    const [remasteredUrl, setRemasteredUrl] = useState<string | null>(null);
+
+    const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files?.[0]) {
+            const file = e.target.files[0];
+            setImage(file);
+            setPreviewUrl(URL.createObjectURL(file));
+            setReport(null);
+            setRemasteredUrl(null);
+        }
+    };
+
+    const handleAnalyze = async () => {
+        if (!image) return;
+        setLoading(true);
+        try {
+            const data = await analyzeForEngine(image, engine);
+            setReport(data);
+        } catch (e) {
+            alert("Analysis failed. Please try again.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleRemaster = async () => {
+        if (!report) return;
+        setLoading(true);
+        try {
+            const url = await generateProfessionalAsset(
+                report.remasterPrompt,
+                'banner', 
+                `${engine} Professional`, 
+                '1:1'
+            );
+            setRemasteredUrl(url);
+            onSave({
+                id: Date.now().toString(),
+                type: 'remaster',
+                url,
+                prompt: `[Remastered for ${engine}] ${report.remasterPrompt}`,
+                createdAt: new Date()
+            });
+        } catch (e) {
+            alert(e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <div className="flex flex-col lg:flex-row gap-6 h-full">
+            {/* Input Column */}
+            <div className="lg:w-1/3 flex flex-col gap-4 overflow-y-auto pr-2">
+                <h2 className="text-3xl font-display font-bold text-white">The Inspector</h2>
+                <p className="text-gray-400 text-sm">Technical analysis & Engine optimization.</p>
+                
+                <div className="bg-game-panel p-4 rounded-xl border border-gray-800">
+                     {!previewUrl ? (
+                        <div className="border-2 border-dashed border-gray-700 rounded-lg p-8 text-center hover:border-indigo-500 transition-colors relative cursor-pointer">
+                            <input type="file" onChange={handleUpload} className="absolute inset-0 opacity-0 cursor-pointer" accept="image/*" />
+                            <div className="text-4xl mb-2">🕵️</div>
+                            <p className="font-bold text-sm text-gray-300">Upload Asset for Analysis</p>
+                        </div>
+                     ) : (
+                        <div className="relative">
+                            <img src={previewUrl} className="w-full rounded-lg border border-gray-700" alt="Subject" />
+                            <button onClick={() => {setImage(null); setPreviewUrl(null); setReport(null);}} className="absolute top-2 right-2 bg-black/60 hover:bg-red-600 p-1 rounded-full text-white transition-colors">✕</button>
+                        </div>
+                     )}
+                </div>
+
+                <div className="bg-game-panel p-4 rounded-xl border border-gray-800">
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Target Engine</label>
+                    <select 
+                        value={engine} 
+                        onChange={(e) => setEngine(e.target.value)}
+                        className="w-full bg-gray-900 border border-gray-700 rounded p-2 text-white mb-4"
+                    >
+                        <option value="Unreal Engine 5">Unreal Engine 5 (Nanite/Lumen)</option>
+                        <option value="Unity HDRP">Unity HDRP (High Fidelity)</option>
+                        <option value="Godot 4">Godot 4 (Indie/Stylized)</option>
+                        <option value="Mobile (iOS/Android)">Mobile (Optimized/Baked)</option>
+                        <option value="Retro / Pixel Engine">Retro (Limited Palette)</option>
+                    </select>
+                    
+                    <button 
+                        onClick={handleAnalyze} 
+                        disabled={!image || loading}
+                        className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 rounded font-bold text-white transition-colors disabled:opacity-50"
+                    >
+                        {loading ? <Spinner /> : 'RUN DIAGNOSTICS'}
+                    </button>
+                </div>
+            </div>
+
+            {/* Analysis & Output Column */}
+            <div className="lg:w-2/3 flex flex-col gap-4 h-full overflow-hidden">
+                {report ? (
+                    <div className="flex flex-col h-full gap-4 animate-in fade-in slide-in-from-right-4">
+                        <div className="flex-1 bg-black/30 rounded-xl border border-gray-800 p-6 overflow-y-auto font-mono text-sm">
+                             <div className="flex justify-between items-start mb-4">
+                                <h3 className="text-xl font-display text-indigo-400">Diagnostic Report</h3>
+                                <span className="bg-indigo-900/50 text-indigo-300 px-2 py-1 rounded text-xs border border-indigo-700">{engine}</span>
+                             </div>
+                             
+                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <h4 className="text-gray-500 uppercase font-bold text-xs mb-2 border-b border-gray-800 pb-1">Critique</h4>
+                                    <p className="text-gray-300 leading-relaxed mb-4">{report.critique}</p>
+                                    
+                                    <h4 className="text-red-400 uppercase font-bold text-xs mb-2 border-b border-red-900/30 pb-1">Detected Issues</h4>
+                                    <ul className="list-disc list-inside text-red-200/80 space-y-1">
+                                        {report.technicalIssues.map((issue, i) => <li key={i}>{issue}</li>)}
+                                    </ul>
+                                </div>
+                                <div>
+                                    <h4 className="text-emerald-400 uppercase font-bold text-xs mb-2 border-b border-emerald-900/30 pb-1">Optimization Plan</h4>
+                                    <p className="text-gray-300 leading-relaxed mb-4">{report.engineSuggestions}</p>
+                                    
+                                    {remasteredUrl ? (
+                                         <div className="mt-4">
+                                            <p className="text-xs text-gray-500 uppercase mb-2">Remastered Result</p>
+                                            <img src={remasteredUrl} className="w-full rounded border border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.2)]" alt="Remastered" />
+                                            <a href={remasteredUrl} download="remastered.jpg" className="block text-center mt-2 bg-emerald-600 py-2 rounded text-white font-bold hover:bg-emerald-500">Download</a>
+                                         </div>
+                                    ) : (
+                                        <div className="mt-4 bg-gray-900 p-4 rounded border border-gray-700 text-center">
+                                            <p className="text-gray-400 text-xs mb-3">AI can attempt to fix these issues and regenerate the asset.</p>
+                                            <button 
+                                                onClick={handleRemaster}
+                                                disabled={loading}
+                                                className="w-full py-2 border border-emerald-500 text-emerald-400 hover:bg-emerald-900/30 rounded font-bold transition-colors"
+                                            >
+                                                {loading ? <Spinner /> : '✨ AUTO-REMASTER'}
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                             </div>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="flex-1 flex flex-col items-center justify-center text-gray-700 bg-black/20 rounded-xl border border-gray-800 border-dashed">
+                         <div className="text-6xl mb-4 grayscale opacity-20">📊</div>
+                         <p>Waiting for Asset Analysis...</p>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+// 2. Interface Studio (GUI Generator)
+const InterfaceStudio: React.FC<{ onSave: (asset: Asset) => void }> = ({ onSave }) => {
+    const [styleRef, setStyleRef] = useState<File | null>(null);
+    const [styleDesc, setStyleDesc] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [generatedItems, setGeneratedItems] = useState<Asset[]>([]);
+    
+    // Quick select components
+    const components = [
+        "Main Menu Button", "Health Bar", "Inventory Grid Slot", 
+        "Dialog Box Background", "Skill Icon Frame", "Settings Toggle Switch"
+    ];
+    const [selectedComp, setSelectedComp] = useState(components[0]);
+
+    const handleAnalyzeStyle = async (file: File) => {
+        setLoading(true);
+        try {
+            const desc = await extractUiStyle(file);
+            setStyleDesc(desc);
+            setStyleRef(file);
+        } catch (e) {
+            alert("Failed to analyze UI style.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleGenerate = async () => {
+        if (!styleDesc) return;
+        setLoading(true);
+        try {
+            const url = await generateUiComponent(styleDesc, selectedComp);
+            const newAsset: Asset = {
+                id: Date.now().toString(),
+                type: 'ui',
+                url,
+                prompt: `[${selectedComp}] ${styleDesc}`,
+                createdAt: new Date()
+            };
+            setGeneratedItems([newAsset, ...generatedItems]);
+            onSave(newAsset);
+        } catch (e) {
+            alert(e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <div className="flex flex-col lg:flex-row gap-6 h-full">
+            <div className="lg:w-1/3 flex flex-col gap-4 overflow-y-auto">
+                <h2 className="text-3xl font-display font-bold text-white">Interface Studio</h2>
+                <p className="text-gray-400 text-sm">Create consistent GUI packages.</p>
+
+                <div className="bg-game-panel p-4 rounded-xl border border-gray-800 space-y-4">
+                     <div className="relative">
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">1. Style Reference</label>
+                        <div className="flex gap-2">
+                            <div className="relative flex-1 bg-gray-900 rounded h-20 flex items-center justify-center border border-gray-700 cursor-pointer hover:border-game-accent overflow-hidden">
+                                <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => e.target.files?.[0] && handleAnalyzeStyle(e.target.files[0])} />
+                                {styleRef ? (
+                                    <img src={URL.createObjectURL(styleRef)} className="w-full h-full object-cover opacity-50" />
+                                ) : (
+                                    <span className="text-xs text-gray-400">Upload Image</span>
+                                )}
+                            </div>
+                        </div>
+                     </div>
+
+                     <div>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">2. Style Guide (Editable)</label>
+                        <textarea 
+                            value={styleDesc}
+                            onChange={(e) => setStyleDesc(e.target.value)}
+                            placeholder="Or describe style here (e.g., Steampunk brass with rivets...)"
+                            className="w-full bg-gray-900 border border-gray-700 rounded p-2 text-white h-32 text-sm focus:border-game-accent outline-none"
+                        />
+                     </div>
+
+                     <div>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">3. Component to Build</label>
+                        <select 
+                            value={selectedComp}
+                            onChange={(e) => setSelectedComp(e.target.value)}
+                            className="w-full bg-gray-900 border border-gray-700 rounded p-2 text-white mb-4"
+                        >
+                            {components.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                        <button 
+                            onClick={handleGenerate} 
+                            disabled={loading || !styleDesc}
+                            className="w-full py-3 bg-gradient-to-r from-blue-600 to-cyan-600 rounded font-bold text-white hover:shadow-lg hover:shadow-blue-900/20 transition-all disabled:opacity-50"
+                        >
+                            {loading ? <Spinner /> : 'GENERATE COMPONENT'}
+                        </button>
+                     </div>
+                </div>
+            </div>
+
+            <div className="lg:w-2/3 bg-black/40 rounded-2xl border border-gray-800 p-4 overflow-y-auto">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    {generatedItems.length === 0 ? (
+                        <div className="col-span-full flex flex-col items-center justify-center h-64 text-gray-600">
+                            <div className="text-4xl mb-2">🖥️</div>
+                            <p>No UI assets generated yet.</p>
+                        </div>
+                    ) : (
+                        generatedItems.map(item => (
+                            <div key={item.id} className="bg-[url('https://www.transparenttextures.com/patterns/ps-neutral.png')] bg-gray-800 rounded-lg p-4 flex flex-col items-center relative group border border-gray-700 hover:border-blue-500 transition-colors">
+                                <img src={item.url} className="max-h-32 object-contain drop-shadow-lg" />
+                                <div className="absolute inset-0 bg-black/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 rounded-lg">
+                                     <a href={item.url} download="ui-asset.png" className="text-white font-bold text-sm hover:text-blue-400">Download</a>
+                                </div>
+                            </div>
+                        ))
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// 3. Logo Studio (Kept similar but cleaned up)
+const LogoStudio: React.FC<{ onSave: (asset: Asset) => void }> = ({ onSave }) => {
     const [prompt, setPrompt] = useState('');
     const [style, setStyle] = useState('Vector Minimalist');
     const [loading, setLoading] = useState(false);
@@ -45,77 +341,54 @@ const LogoStudio = () => {
         try {
             const url = await generateProfessionalAsset(prompt, 'logo', style, '1:1');
             setResult(url);
-        } catch (e) {
-            alert(e);
-        } finally {
-            setLoading(false);
-        }
+            onSave({ id: Date.now().toString(), type: 'logo', url, prompt: `[${style}] ${prompt}`, createdAt: new Date() });
+        } catch (e) { alert(e); } 
+        finally { setLoading(false); }
     };
 
     return (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 h-full">
-            <div className="lg:col-span-4 flex flex-col gap-6">
+        <div className="flex flex-col lg:flex-row gap-6 h-full">
+            <div className="lg:w-1/3 flex-shrink-0 flex flex-col gap-6 overflow-y-auto pr-2">
                 <div>
                     <h2 className="text-3xl font-display font-bold text-white mb-2">Logo Forge</h2>
-                    <p className="text-gray-400 text-sm">Create professional branding assets using high-fidelity models.</p>
+                    <p className="text-gray-400 text-sm">Create professional branding assets.</p>
                 </div>
-                
-                <div className="space-y-4 bg-game-panel p-6 rounded-2xl border border-gray-800">
+                <div className="space-y-4 bg-game-panel p-6 rounded-2xl border border-gray-800 shadow-xl">
                     <div>
                         <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Brand Concept</label>
-                        <textarea 
-                            value={prompt}
-                            onChange={(e) => setPrompt(e.target.value)}
-                            placeholder="e.g., A cybernetic wolf head, aggressive, neon blue accents"
-                            className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white focus:border-game-accent focus:ring-1 focus:ring-game-accent outline-none transition-all h-32 resize-none"
-                        />
+                        <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="e.g., A cybernetic wolf head" className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white h-32 resize-none focus:border-game-accent outline-none" />
                     </div>
-
                     <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Art Direction</label>
-                        <select 
-                            value={style} 
-                            onChange={(e) => setStyle(e.target.value)}
-                            className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white focus:border-game-accent outline-none"
-                        >
-                            <option value="Vector Minimalist">Vector Minimalist (App Icon)</option>
-                            <option value="Esports Mascot">Esports Mascot (Bold, Outline)</option>
-                            <option value="3D Rendered Glossy">3D Rendered (Glossy, Mobile)</option>
-                            <option value="Pixel Art 16-bit">Pixel Art (Retro)</option>
-                            <option value="Corporate Geometric">Corporate Geometric</option>
+                        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Style</label>
+                        <select value={style} onChange={(e) => setStyle(e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white">
+                            <option value="Vector Minimalist">Vector Minimalist</option>
+                            <option value="Esports Mascot">Esports Mascot</option>
+                            <option value="3D Rendered Glossy">3D Rendered Glossy</option>
+                            <option value="Chrome Metal">Chrome Metal</option>
                         </select>
                     </div>
-
-                    <button 
-                        onClick={handleGenerate}
-                        disabled={loading}
-                        className="w-full py-4 bg-gradient-to-r from-indigo-600 to-violet-600 rounded-lg font-display font-bold text-white shadow-lg shadow-indigo-900/20 hover:shadow-indigo-600/40 transition-all transform hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        {loading ? 'Forging Asset...' : 'GENERATE LOGO'}
+                    <button onClick={handleGenerate} disabled={loading} className="w-full py-4 bg-gradient-to-r from-indigo-600 to-violet-600 rounded-lg font-display font-bold text-white shadow-lg disabled:opacity-50">
+                        {loading ? <Spinner /> : 'FORGE LOGO'}
                     </button>
                 </div>
             </div>
-
-            <div className="lg:col-span-8 bg-game-panel rounded-2xl border border-gray-800 flex items-center justify-center relative overflow-hidden">
+            <div className="lg:w-2/3 bg-black/40 rounded-2xl border border-gray-800 flex items-center justify-center relative overflow-hidden min-h-[400px]">
                 <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-20"></div>
                 {result ? (
-                    <div className="relative z-10 text-center">
-                         <img src={result} alt="Generated Logo" className="max-w-md max-h-[600px] rounded-xl shadow-2xl border border-gray-700" />
-                         <a href={result} download={`logo-${Date.now()}.png`} className="inline-block mt-6 text-sm text-game-accent hover:text-white transition-colors font-bold cursor-pointer">DOWNLOAD ASSET</a>
+                    <div className="relative z-10 flex flex-col items-center">
+                         <img src={result} alt="Logo" className="max-h-[500px] rounded-xl shadow-2xl border border-gray-700" />
+                         <a href={result} download={`logo-${Date.now()}.png`} className="mt-4 px-6 py-2 bg-game-accent rounded-full text-sm font-bold hover:bg-white hover:text-game-accent transition-colors">Download PNG</a>
                     </div>
                 ) : (
-                    <div className="text-center z-10 opacity-30">
-                        <div className="text-6xl mb-4">⚜️</div>
-                        <p className="font-display text-xl">Awaiting Input</p>
-                    </div>
+                    <div className="text-center z-10 opacity-30 select-none"><div className="text-8xl mb-4">⚜️</div><p className="font-display text-2xl tracking-widest">AWAITING BLUEPRINT</p></div>
                 )}
             </div>
         </div>
     );
 };
 
-// 2. Environment & Banner Studio
-const EnvironmentStudio = () => {
+// 4. Environment Studio
+const EnvironmentStudio: React.FC<{ onSave: (asset: Asset) => void }> = ({ onSave }) => {
     const [prompt, setPrompt] = useState('');
     const [style, setStyle] = useState('Unreal Engine 5 Realistic');
     const [aspect, setAspect] = useState('16:9');
@@ -128,94 +401,47 @@ const EnvironmentStudio = () => {
         try {
             const url = await generateProfessionalAsset(prompt, 'banner', style, aspect);
             setResult(url);
-        } catch (e) {
-            alert(e);
-        } finally {
-            setLoading(false);
-        }
+            onSave({ id: Date.now().toString(), type: 'banner', url, prompt: `[${style}] ${prompt}`, createdAt: new Date() });
+        } catch (e) { alert(e); } 
+        finally { setLoading(false); }
     };
 
     return (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 h-full">
-            <div className="lg:col-span-4 flex flex-col gap-6">
+        <div className="flex flex-col lg:flex-row gap-6 h-full">
+            <div className="lg:w-1/3 flex-shrink-0 flex flex-col gap-6 overflow-y-auto pr-2">
                 <div>
                     <h2 className="text-3xl font-display font-bold text-white mb-2">World Builder</h2>
-                    <p className="text-gray-400 text-sm">Generate promotional art, loading screens, and backgrounds.</p>
+                    <p className="text-gray-400 text-sm">Cinematic backgrounds.</p>
                 </div>
-                
-                <div className="space-y-4 bg-game-panel p-6 rounded-2xl border border-gray-800">
-                    <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Scene Description</label>
-                        <textarea 
-                            value={prompt}
-                            onChange={(e) => setPrompt(e.target.value)}
-                            placeholder="e.g., A ruined cyberpunk city at sunset, rain slicked streets, neon reflections"
-                            className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white focus:border-game-accent focus:ring-1 focus:ring-game-accent outline-none transition-all h-32 resize-none"
-                        />
+                <div className="space-y-4 bg-game-panel p-6 rounded-2xl border border-gray-800 shadow-xl">
+                    <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="e.g., A ruined cyberpunk city" className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white h-32 resize-none focus:border-game-accent outline-none" />
+                    <select value={style} onChange={(e) => setStyle(e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white">
+                        <option value="Unreal Engine 5 Realistic">Unreal Engine 5</option>
+                        <option value="Digital Painting Fantasy">Fantasy Painting</option>
+                        <option value="Sci-Fi Concept Art">Sci-Fi Concept</option>
+                    </select>
+                    <div className="grid grid-cols-3 gap-2">
+                        {['16:9', '9:16', '4:3'].map(r => (
+                            <button key={r} onClick={() => setAspect(r)} className={`py-2 text-sm rounded border ${aspect === r ? 'bg-emerald-600 border-emerald-500 text-white' : 'border-gray-700 text-gray-400'}`}>{r}</button>
+                        ))}
                     </div>
-
-                    <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Rendering Engine</label>
-                        <select 
-                            value={style} 
-                            onChange={(e) => setStyle(e.target.value)}
-                            className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white focus:border-game-accent outline-none"
-                        >
-                            <option value="Unreal Engine 5 Realistic">Unreal Engine 5 (Photoreal)</option>
-                            <option value="Digital Painting Fantasy">Digital Painting (Fantasy)</option>
-                            <option value="Sci-Fi Concept Art">Sci-Fi Concept Art (Matte Paint)</option>
-                            <option value="Anime Cel Shaded">Anime (Cel Shaded)</option>
-                            <option value="Low Poly Isometric">Low Poly (Isometric)</option>
-                        </select>
-                    </div>
-
-                     <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Aspect Ratio</label>
-                        <div className="grid grid-cols-3 gap-2">
-                            {['16:9', '9:16', '4:3'].map(r => (
-                                <button 
-                                    key={r}
-                                    onClick={() => setAspect(r)}
-                                    className={`py-2 text-sm rounded border ${aspect === r ? 'bg-game-accent border-game-accent text-white' : 'border-gray-700 text-gray-400 hover:border-gray-500'}`}
-                                >
-                                    {r}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    <button 
-                        onClick={handleGenerate}
-                        disabled={loading}
-                        className="w-full py-4 bg-gradient-to-r from-emerald-600 to-teal-600 rounded-lg font-display font-bold text-white shadow-lg shadow-emerald-900/20 hover:shadow-emerald-600/40 transition-all transform hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        {loading ? 'Rendering World...' : 'GENERATE ENVIRONMENT'}
-                    </button>
+                    <button onClick={handleGenerate} disabled={loading} className="w-full py-4 bg-gradient-to-r from-emerald-600 to-teal-600 rounded-lg font-display font-bold text-white shadow-lg disabled:opacity-50">{loading ? <Spinner /> : 'RENDER WORLD'}</button>
                 </div>
             </div>
-
-            <div className="lg:col-span-8 bg-game-panel rounded-2xl border border-gray-800 flex items-center justify-center relative overflow-hidden p-4">
-                {result ? (
-                    <div className="relative z-10 text-center w-full h-full flex flex-col items-center justify-center">
-                         <img src={result} alt="Generated Env" className="max-w-full max-h-full object-contain rounded shadow-2xl border border-gray-700" />
-                         <a href={result} download={`environment-${Date.now()}.jpg`} className="inline-block mt-4 text-sm text-game-accent hover:text-white transition-colors font-bold cursor-pointer">DOWNLOAD HIGH RES</a>
-                    </div>
-                ) : (
-                    <div className="text-center z-10 opacity-30">
-                        <div className="text-6xl mb-4">🏔️</div>
-                        <p className="font-display text-xl">Viewport Empty</p>
-                    </div>
-                )}
+            <div className="lg:w-2/3 bg-black/40 rounded-2xl border border-gray-800 flex items-center justify-center min-h-[400px]">
+                {result ? <img src={result} className="max-w-full max-h-full object-contain rounded shadow-2xl" /> : <div className="text-center opacity-30"><div className="text-8xl mb-4">🏔️</div><p className="font-display text-2xl tracking-widest">VIEWPORT EMPTY</p></div>}
             </div>
         </div>
     );
 };
 
-// 3. Texture Forge
-const TextureForge = () => {
+// 5. Texture Forge (Upgraded)
+const TextureForge: React.FC<{ onSave: (asset: Asset) => void }> = ({ onSave }) => {
+    const [mode, setMode] = useState<'create' | 'extract' | 'seamless'>('create');
     const [prompt, setPrompt] = useState('');
     const [loading, setLoading] = useState(false);
     const [result, setResult] = useState<string | null>(null);
+    const [analysis, setAnalysis] = useState('');
 
     const handleGenerate = async () => {
         if (!prompt) return;
@@ -223,416 +449,214 @@ const TextureForge = () => {
         try {
             const url = await generateProfessionalAsset(prompt, 'texture', 'PBR Material', '1:1');
             setResult(url);
-        } catch (e) {
-            alert(e);
-        } finally {
-            setLoading(false);
+            onSave({ id: Date.now().toString(), type: 'texture', url, prompt: `[Generated] ${prompt}`, createdAt: new Date() });
+        } catch (e) { alert(e); } 
+        finally { setLoading(false); }
+    };
+
+    const handleProcessImage = async (e: React.ChangeEvent<HTMLInputElement>, seamless: boolean) => {
+        if (e.target.files?.[0]) {
+            setLoading(true);
+            setResult(null);
+            try {
+                const { textureUrl, materialAnalysis } = await extractTextureFromImage(e.target.files[0], seamless);
+                setResult(textureUrl);
+                setAnalysis(materialAnalysis);
+                onSave({
+                    id: Date.now().toString(),
+                    type: 'texture',
+                    url: textureUrl,
+                    prompt: `[${seamless ? 'Seamless' : 'Extracted'}] ${materialAnalysis}`,
+                    createdAt: new Date()
+                });
+            } catch (err) { alert(err); } 
+            finally { setLoading(false); }
         }
     };
 
     return (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 h-full">
-            <div className="lg:col-span-4 flex flex-col gap-6">
+        <div className="flex flex-col lg:flex-row gap-6 h-full">
+            <div className="lg:w-1/3 flex-shrink-0 flex flex-col gap-6 overflow-y-auto pr-2">
                 <div>
                     <h2 className="text-3xl font-display font-bold text-white mb-2">Texture Forge</h2>
-                    <p className="text-gray-400 text-sm">Generate seamless, tileable PBR-ready textures.</p>
+                    <p className="text-gray-400 text-sm">Create, extract, or tile materials.</p>
                 </div>
-                <div className="space-y-4 bg-game-panel p-6 rounded-2xl border border-gray-800">
-                    <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Material Description</label>
-                        <textarea 
-                            value={prompt}
-                            onChange={(e) => setPrompt(e.target.value)}
-                            placeholder="e.g., Ancient mossy stone wall, cracked, wet surface"
-                            className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white focus:border-game-accent focus:ring-1 focus:ring-game-accent outline-none transition-all h-32 resize-none"
-                        />
-                    </div>
-                    <button 
-                        onClick={handleGenerate}
-                        disabled={loading}
-                        className="w-full py-4 bg-gradient-to-r from-amber-600 to-orange-600 rounded-lg font-display font-bold text-white shadow-lg shadow-amber-900/20 hover:shadow-amber-600/40 transition-all transform hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        {loading ? 'Forging Material...' : 'GENERATE TEXTURE'}
-                    </button>
+                <div className="flex gap-1 bg-gray-900 p-1 rounded-lg">
+                    <button onClick={() => setMode('create')} className={`flex-1 py-2 text-[10px] font-bold uppercase rounded transition-all ${mode === 'create' ? 'bg-amber-600 text-white' : 'text-gray-400 hover:text-white'}`}>New</button>
+                    <button onClick={() => setMode('extract')} className={`flex-1 py-2 text-[10px] font-bold uppercase rounded transition-all ${mode === 'extract' ? 'bg-amber-600 text-white' : 'text-gray-400 hover:text-white'}`}>Extract</button>
+                    <button onClick={() => setMode('seamless')} className={`flex-1 py-2 text-[10px] font-bold uppercase rounded transition-all ${mode === 'seamless' ? 'bg-amber-600 text-white' : 'text-gray-400 hover:text-white'}`}>Make Seamless</button>
+                </div>
+                <div className="space-y-4 bg-game-panel p-6 rounded-2xl border border-gray-800 shadow-xl">
+                    {mode === 'create' ? (
+                        <>
+                            <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Material description..." className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white h-32 resize-none focus:border-game-accent outline-none" />
+                            <button onClick={handleGenerate} disabled={loading} className="w-full py-4 bg-gradient-to-r from-amber-600 to-orange-600 rounded-lg font-display font-bold text-white hover:shadow-amber-600/40 transition-all disabled:opacity-50">{loading ? <Spinner /> : 'FORGE MATERIAL'}</button>
+                        </>
+                    ) : (
+                        <>
+                            <div className="border-2 border-dashed border-gray-700 rounded-xl p-8 text-center hover:border-amber-500 transition-colors cursor-pointer relative">
+                                <input type="file" onChange={(e) => handleProcessImage(e, mode === 'seamless')} className="absolute inset-0 opacity-0 cursor-pointer" accept="image/*" />
+                                <div className="text-4xl mb-2">{mode === 'seamless' ? '🧩' : '📷'}</div>
+                                <p className="font-bold text-white">{mode === 'seamless' ? 'Upload to Tile' : 'Upload Reference'}</p>
+                                <p className="text-xs text-gray-500 mt-2">{mode === 'seamless' ? 'AI will remove seams & lighting artifacts.' : 'Analyze & recreate material.'}</p>
+                            </div>
+                            {loading && <div className="text-center text-amber-500 text-sm animate-pulse">Processing material data...</div>}
+                        </>
+                    )}
+                    {analysis && <div className="bg-black/30 p-3 rounded border border-gray-700"><p className="text-xs text-gray-400 uppercase font-bold mb-1">Analysis</p><p className="text-xs text-gray-200 italic line-clamp-4">{analysis}</p></div>}
                 </div>
             </div>
-            <div className="lg:col-span-8 bg-game-panel rounded-2xl border border-gray-800 flex items-center justify-center relative overflow-hidden">
+            <div className="lg:w-2/3 bg-black/40 rounded-2xl border border-gray-800 flex items-center justify-center min-h-[400px]">
                  {result ? (
-                    <div className="relative z-10 text-center w-full h-full p-8">
-                         <div 
-                            className="w-full h-full rounded shadow-2xl border border-gray-700"
-                            style={{
-                                backgroundImage: `url(${result})`,
-                                backgroundSize: '256px'
-                            }}
-                         ></div>
-                         <div className="absolute bottom-4 left-0 right-0 text-center pointer-events-none">
-                            <span className="bg-black/70 px-4 py-1 rounded text-xs text-white">Preview (Tiled)</span>
+                    <div className="relative w-full h-full p-8 flex flex-col items-center justify-center animate-in fade-in">
+                         <div className="w-full h-full rounded shadow-2xl border border-gray-700 min-h-[300px]" style={{ backgroundImage: `url(${result})`, backgroundSize: '256px' }}></div>
+                         <div className="mt-4 flex items-center gap-4">
+                            <span className="bg-black/50 px-3 py-1 rounded text-xs text-gray-400">Preview Tiled 256px</span>
+                            <a href={result} download={`texture-${Date.now()}.jpg`} className="text-amber-500 font-bold text-sm hover:text-white uppercase">Download Texture</a>
                          </div>
-                         <a href={result} download={`texture-${Date.now()}.jpg`} className="absolute bottom-4 right-4 pointer-events-auto bg-game-accent px-4 py-2 rounded text-sm text-white font-bold hover:bg-white hover:text-game-accent transition-colors">SAVE TEXTURE</a>
                     </div>
-                ) : (
-                    <div className="text-center z-10 opacity-30">
-                        <div className="text-6xl mb-4">🧱</div>
-                        <p className="font-display text-xl">Material Slot Empty</p>
-                    </div>
-                )}
+                ) : <div className="text-center opacity-30"><div className="text-8xl mb-4">🧱</div><p className="font-display text-2xl tracking-widest">MATERIAL SLOT EMPTY</p></div>}
             </div>
         </div>
     );
 }
 
-// 4. Asset Editor (Canvas Logic)
-const AssetEditor = () => {
+// 6. Asset Editor
+const AssetEditor: React.FC<{ onSave: (asset: Asset) => void }> = ({ onSave }) => {
     const [image, setImage] = useState<File | null>(null);
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
     const [prompt, setPrompt] = useState('');
-    const [brushSize, setBrushSize] = useState(30);
     const [loading, setLoading] = useState(false);
-    const [analysis, setAnalysis] = useState<any>(null);
+    const [reversePrompt, setReversePrompt] = useState('');
 
-    const canvasRef = useRef<HTMLCanvasElement>(null);
-    const [isDrawing, setIsDrawing] = useState(false);
-
-    const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files?.[0]) {
-            const file = e.target.files[0];
-            setImage(file);
-            const url = URL.createObjectURL(file);
-            setPreviewUrl(url);
-            
-            // Auto Analyze
-            analyzeAssetForDev(file).then(setAnalysis);
+            setImage(e.target.files[0]);
+            setPreviewUrl(URL.createObjectURL(e.target.files[0]));
+            setReversePrompt('');
         }
-    };
-
-    // Canvas Drawing Logic
-    useEffect(() => {
-        if (!canvasRef.current || !previewUrl) return;
-        const canvas = canvasRef.current;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-
-        const img = new Image();
-        img.src = previewUrl;
-        img.onload = () => {
-            canvas.width = canvas.parentElement?.clientWidth || 500;
-            canvas.height = (img.height / img.width) * canvas.width;
-        };
-    }, [previewUrl]);
-
-    const draw = (e: React.MouseEvent) => {
-        if (!isDrawing || !canvasRef.current) return;
-        const rect = canvasRef.current.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        const ctx = canvasRef.current.getContext('2d');
-        if (!ctx) return;
-
-        ctx.fillStyle = 'rgba(255, 0, 255, 0.5)';
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.beginPath();
-        ctx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
-        ctx.fill();
-    };
-
-    const getMask = async (): Promise<File | null> => {
-        if (!canvasRef.current) return null;
-        // Create a black/white mask from the canvas
-        const offscreen = document.createElement('canvas');
-        offscreen.width = canvasRef.current.width;
-        offscreen.height = canvasRef.current.height;
-        const ctx = offscreen.getContext('2d');
-        if (!ctx) return null;
-
-        // Draw black background
-        ctx.fillStyle = 'black';
-        ctx.fillRect(0, 0, offscreen.width, offscreen.height);
-        
-        // Draw current canvas content as white
-        ctx.drawImage(canvasRef.current, 0, 0);
-        const imageData = ctx.getImageData(0,0, offscreen.width, offscreen.height);
-        const data = imageData.data;
-        // Check if anything is drawn (simple check for non-black pixels)
-        let hasMask = false;
-        for(let i=0; i<data.length; i+=4) {
-            // If pixel has alpha/color (our brush is pink rgba(255, 0, 255, 0.5))
-            // We want to turn it WHITE for the mask
-            if (data[i] > 50) { // R channel check
-                data[i] = 255;
-                data[i+1] = 255;
-                data[i+2] = 255;
-                data[i+3] = 255;
-                hasMask = true;
-            }
-        }
-        ctx.putImageData(imageData, 0, 0);
-        
-        if (!hasMask) return null;
-
-        return new Promise(resolve => {
-            offscreen.toBlob(blob => {
-                resolve(blob ? new File([blob], 'mask.png', { type: 'image/png' }) : null);
-            });
-        });
     };
 
     const handleEdit = async () => {
         if (!image || !prompt) return;
         setLoading(true);
         try {
-            const mask = await getMask();
-            const newUrl = await editGameAsset(image, mask, prompt);
-            // Update preview to new image, clear mask
+            const newUrl = await editGameAsset(image, null, prompt); // Simplified editor for now
             setPreviewUrl(newUrl);
-            const canvas = canvasRef.current;
-            const ctx = canvas?.getContext('2d');
-            ctx?.clearRect(0,0, canvas!.width, canvas!.height);
-            
-            // Convert base64 to file for next edit
-            const res = await fetch(newUrl);
-            const blob = await res.blob();
-            setImage(new File([blob], "edited.png", { type: "image/png" }));
-
-        } catch (e) {
-            alert(e);
-        } finally {
-            setLoading(false);
-        }
+            // Convert back to file for further edits if needed...
+            onSave({ id: Date.now().toString(), type: 'edit', url: newUrl, prompt: `[Edit] ${prompt}`, createdAt: new Date() });
+        } catch (e) { alert(e); } finally { setLoading(false); }
+    };
+    
+    const handleGetPrompt = async () => {
+        if (!image) return;
+        setLoading(true);
+        try { const p = await reverseEngineerPrompt(image); setReversePrompt(p); } catch (e) { alert(e); } finally { setLoading(false); }
     };
 
     return (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 h-full">
-            <div className="lg:col-span-8 bg-game-panel rounded-2xl border border-gray-800 p-6 flex flex-col relative">
+        <div className="flex flex-col lg:flex-row gap-6 h-full">
+            <div className="lg:w-2/3 bg-black/40 rounded-2xl border border-gray-800 p-6 flex flex-col relative min-h-[500px]">
                  {!previewUrl ? (
-                     <div 
-                        className="flex-1 border-2 border-dashed border-gray-700 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-game-accent transition-colors"
-                        onClick={() => document.getElementById('file-upload')?.click()}
-                    >
+                     <div className="flex-1 border-2 border-dashed border-gray-700 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-game-accent transition-colors" onClick={() => document.getElementById('file-upload')?.click()}>
                          <input type="file" id="file-upload" className="hidden" onChange={handleUpload} />
                          <div className="text-5xl mb-4">📤</div>
-                         <p className="font-display text-xl text-gray-400">Drop Asset Here or Click to Upload</p>
+                         <p className="font-display text-xl text-gray-400">Drop Asset Here</p>
                      </div>
                  ) : (
                      <div className="flex-1 relative flex items-center justify-center bg-black/50 rounded-xl overflow-hidden">
-                         <img src={previewUrl} className="absolute max-w-full max-h-full pointer-events-none select-none opacity-60" alt="Base" />
-                         <img src={previewUrl} className="relative max-w-full max-h-full pointer-events-none select-none z-0" alt="Reference" />
-                         <canvas 
-                            ref={canvasRef}
-                            className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-10 cursor-crosshair touch-none"
-                            onMouseDown={(e) => { setIsDrawing(true); draw(e); }}
-                            onMouseMove={draw}
-                            onMouseUp={() => setIsDrawing(false)}
-                            onMouseLeave={() => setIsDrawing(false)}
-                         />
-                     </div>
-                 )}
-                 {previewUrl && (
-                     <div className="mt-4 flex items-center justify-between bg-gray-900 p-3 rounded-lg">
-                         <div className="flex items-center gap-4">
-                             <span className="text-xs uppercase font-bold text-gray-500">Brush Size</span>
-                             <input 
-                                type="range" 
-                                min="5" max="100" 
-                                value={brushSize} 
-                                onChange={(e) => setBrushSize(Number(e.target.value))}
-                                className="w-32 accent-game-accent"
-                             />
-                         </div>
-                         <button 
-                            onClick={() => {
-                                const ctx = canvasRef.current?.getContext('2d');
-                                ctx?.clearRect(0,0, canvasRef.current!.width, canvasRef.current!.height);
-                            }}
-                            className="text-xs text-red-400 hover:text-red-300 font-bold"
-                        >
-                             CLEAR MASK
-                         </button>
+                         <img src={previewUrl} className="max-w-full max-h-full" alt="Edit Target" />
                      </div>
                  )}
             </div>
-
-            <div className="lg:col-span-4 flex flex-col gap-6 h-full overflow-y-auto">
-                <div>
-                    <h2 className="text-3xl font-display font-bold text-white mb-2">Asset Editor</h2>
-                    <p className="text-gray-400 text-sm">Inpaint, edit, and analyze existing assets.</p>
+            <div className="lg:w-1/3 flex-shrink-0 flex flex-col gap-6 overflow-y-auto">
+                <div><h2 className="text-3xl font-display font-bold text-white mb-2">Smart Editor</h2><p className="text-gray-400 text-sm">Edit or reverse-engineer assets.</p></div>
+                <div className="space-y-4 bg-game-panel p-6 rounded-2xl border border-gray-800">
+                    <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Instruction: e.g., Make it night time" className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white focus:border-game-accent outline-none h-24 resize-none" />
+                    <button onClick={handleEdit} disabled={loading || !image} className="w-full py-4 bg-gradient-to-r from-pink-600 to-rose-600 rounded-lg font-display font-bold text-white disabled:opacity-50">{loading ? <Spinner /> : 'APPLY EDIT'}</button>
+                    <div className="border-t border-gray-800 pt-4 mt-4">
+                        <button onClick={handleGetPrompt} disabled={loading || !image} className="w-full py-2 border border-gray-600 rounded text-gray-300 text-xs font-bold uppercase hover:bg-gray-800 transition-colors">Get Prompt from Image</button>
+                        {reversePrompt && <div className="mt-2 p-2 bg-black/40 rounded text-xs text-gray-300 border border-gray-700">{reversePrompt}</div>}
+                    </div>
                 </div>
+            </div>
+        </div>
+    );
+}
 
-                {analysis && (
-                    <div className="bg-gray-900/50 border border-gray-700 p-4 rounded-lg text-sm">
-                        <h3 className="font-bold text-game-accent mb-2">AI Analysis</h3>
-                        <div className="grid grid-cols-2 gap-2 mb-2">
-                            <div className="bg-black/40 p-2 rounded">
-                                <span className="block text-xs text-gray-500">Style</span>
-                                {analysis.style}
-                            </div>
-                            <div className="bg-black/40 p-2 rounded">
-                                <span className="block text-xs text-gray-500">Mood</span>
-                                {analysis.mood}
+// 7. Asset Library (Standard)
+const AssetLibrary: React.FC<{ assets: Asset[], onDelete: (id: string) => void }> = ({ assets, onDelete }) => {
+    return (
+        <div className="h-full flex flex-col">
+            <div className="mb-6"><h2 className="text-3xl font-display font-bold text-white mb-2">Asset Inventory</h2><p className="text-gray-400 text-sm">Manage your generated game assets.</p></div>
+            {assets.length === 0 ? <div className="flex-1 flex flex-col items-center justify-center text-gray-600 opacity-50"><div className="text-6xl mb-4">📦</div><p className="text-xl font-display">Inventory Empty</p></div> : 
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 overflow-y-auto p-2 pb-20">
+                {assets.map((asset) => (
+                    <div key={asset.id} className="group relative bg-gray-900 rounded-lg border border-gray-800 overflow-hidden aspect-square hover:border-game-accent transition-all">
+                        <img src={asset.url} alt={asset.type} className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-3">
+                            <div className="flex gap-2 justify-between items-end">
+                                <span className="text-xs font-bold uppercase bg-game-accent px-2 py-0.5 rounded text-white">{asset.type}</span>
+                                <div className="flex gap-2">
+                                    <a href={asset.url} download={`${asset.type}-${asset.id}.png`} className="p-2 bg-gray-800 rounded-full hover:bg-white hover:text-black text-white transition-colors">⬇️</a>
+                                    <button onClick={() => onDelete(asset.id)} className="p-2 bg-red-900/80 rounded-full hover:bg-red-600 text-white transition-colors">🗑️</button>
+                                </div>
                             </div>
                         </div>
-                        <p className="text-gray-400 text-xs italic">{analysis.technicalNotes}</p>
                     </div>
-                )}
-
-                <div className="space-y-4 bg-game-panel p-6 rounded-2xl border border-gray-800">
-                    <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Edit Instruction</label>
-                        <textarea 
-                            value={prompt}
-                            onChange={(e) => setPrompt(e.target.value)}
-                            placeholder="e.g., Make the eyes glow red, add a scar"
-                            className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white focus:border-game-accent focus:ring-1 focus:ring-game-accent outline-none transition-all h-32 resize-none"
-                        />
-                        <p className="text-xs text-gray-500 mt-2">Tip: Paint over the area you want to change.</p>
-                    </div>
-
-                    <button 
-                        onClick={handleEdit}
-                        disabled={loading || !image}
-                        className="w-full py-4 bg-gradient-to-r from-pink-600 to-rose-600 rounded-lg font-display font-bold text-white shadow-lg shadow-pink-900/20 hover:shadow-pink-600/40 transition-all transform hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        {loading ? 'Processing Edit...' : 'APPLY CHANGES'}
-                    </button>
-                </div>
-            </div>
+                ))}
+            </div>}
         </div>
-    )
+    );
 }
-
-// 5. Ideation & Mechanics
-const IdeationStudio = () => {
-    const [concept, setConcept] = useState('');
-    const [result, setResult] = useState('');
-    const [loading, setLoading] = useState(false);
-
-    const handleBrainstorm = async () => {
-        if(!concept) return;
-        setLoading(true);
-        try {
-            const text = await brainstormGameMechanics(concept);
-            setResult(text);
-        } catch(e) {
-            alert(e);
-        } finally {
-            setLoading(false);
-        }
-    }
-
-    return (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 h-full">
-             <div className="lg:col-span-4 flex flex-col gap-6">
-                <div>
-                    <h2 className="text-3xl font-display font-bold text-white mb-2">Game Brain</h2>
-                    <p className="text-gray-400 text-sm">Turn loose concepts into solid game mechanics using AI reasoning.</p>
-                </div>
-                <div className="space-y-4 bg-game-panel p-6 rounded-2xl border border-gray-800">
-                    <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Core Concept</label>
-                        <textarea 
-                            value={concept}
-                            onChange={(e) => setConcept(e.target.value)}
-                            placeholder="e.g., A racing game where you drive backwards in time"
-                            className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white focus:border-game-accent focus:ring-1 focus:ring-game-accent outline-none transition-all h-32 resize-none"
-                        />
-                    </div>
-                    <button 
-                        onClick={handleBrainstorm}
-                        disabled={loading}
-                        className="w-full py-4 bg-gradient-to-r from-cyan-600 to-blue-600 rounded-lg font-display font-bold text-white shadow-lg shadow-cyan-900/20 hover:shadow-cyan-600/40 transition-all transform hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        {loading ? 'Thinking...' : 'BRAINSTORM MECHANICS'}
-                    </button>
-                </div>
-             </div>
-             <div className="lg:col-span-8 bg-game-panel rounded-2xl border border-gray-800 p-8 overflow-y-auto">
-                 {loading ? (
-                     <div className="flex items-center justify-center h-full">
-                         <Spinner />
-                     </div>
-                 ) : result ? (
-                     <div className="prose prose-invert max-w-none">
-                        <div dangerouslySetInnerHTML={{__html: result.replace(/\n/g, '<br/>').replace(/\*\*(.*?)\*\*/g, '<strong class="text-game-accent">$1</strong>')}} />
-                     </div>
-                 ) : (
-                     <div className="flex items-center justify-center h-full opacity-30 flex-col">
-                         <div className="text-6xl mb-4">💡</div>
-                         <p className="font-display text-xl">Ready for Ideas</p>
-                     </div>
-                 )}
-             </div>
-        </div>
-    )
-}
-
 
 // --- Main Layout ---
 
 const App: React.FC = () => {
-    const [activeModule, setActiveModule] = useState<'logo' | 'environment' | 'texture' | 'editor' | 'ideation'>('logo');
+    const [activeModule, setActiveModule] = useState<'logo' | 'environment' | 'texture' | 'editor' | 'library' | 'inspector' | 'interface'>('inspector');
+    const [library, setLibrary] = useState<Asset[]>([]);
+
+    const addToLibrary = (asset: Asset) => { setLibrary(prev => [asset, ...prev]); };
+    const deleteFromLibrary = (id: string) => { setLibrary(prev => prev.filter(a => a.id !== id)); };
 
     return (
-        <div className="flex h-screen bg-game-dark font-sans text-gray-200 selection:bg-game-accent selection:text-white">
-            {/* Sidebar */}
-            <aside className="w-64 bg-game-panel border-r border-gray-800 flex flex-col p-4 z-20">
-                <div className="mb-10 px-2 flex items-center gap-2">
-                    <div className="w-8 h-8 bg-gradient-to-br from-game-accent to-purple-600 rounded-lg flex items-center justify-center text-white font-bold font-display">G</div>
+        <div className="flex h-screen bg-game-dark font-sans text-gray-200 selection:bg-game-accent selection:text-white overflow-hidden">
+            <aside className="w-64 bg-game-panel border-r border-gray-800 flex flex-col p-4 z-20 flex-shrink-0">
+                <div className="mb-8 px-2 flex items-center gap-2">
+                    <div className="w-8 h-8 bg-gradient-to-br from-game-accent to-purple-600 rounded-lg flex items-center justify-center text-white font-bold font-display shadow-[0_0_15px_rgba(99,102,241,0.5)]">G</div>
                     <h1 className="text-xl font-display font-bold text-white tracking-wider">GEMINI<span className="text-game-accent">STUDIO</span></h1>
                 </div>
 
-                <nav className="space-y-2 flex-1">
-                    <SidebarItem 
-                        icon="⚜️" label="Logo Forge" 
-                        active={activeModule === 'logo'} 
-                        onClick={() => setActiveModule('logo')} 
-                    />
-                    <SidebarItem 
-                        icon="🏔️" label="World Builder" 
-                        active={activeModule === 'environment'} 
-                        onClick={() => setActiveModule('environment')} 
-                    />
-                    <SidebarItem 
-                        icon="🧱" label="Texture Forge" 
-                        active={activeModule === 'texture'} 
-                        onClick={() => setActiveModule('texture')} 
-                    />
-                    <SidebarItem 
-                        icon="🎨" label="Asset Editor" 
-                        active={activeModule === 'editor'} 
-                        onClick={() => setActiveModule('editor')} 
-                    />
-                    <SidebarItem 
-                        icon="💡" label="Game Brain" 
-                        active={activeModule === 'ideation'} 
-                        onClick={() => setActiveModule('ideation')} 
-                    />
+                <nav className="space-y-1 flex-1 overflow-y-auto custom-scrollbar">
+                    <div className="mb-4">
+                        <p className="px-4 text-[10px] font-bold text-gray-600 uppercase tracking-wider mb-2">Analysis</p>
+                        <SidebarItem icon="🕵️" label="The Inspector" active={activeModule === 'inspector'} onClick={() => setActiveModule('inspector')} />
+                    </div>
+                    <div className="mb-4">
+                        <p className="px-4 text-[10px] font-bold text-gray-600 uppercase tracking-wider mb-2">Production</p>
+                        <SidebarItem icon="🖥️" label="Interface Studio" active={activeModule === 'interface'} onClick={() => setActiveModule('interface')} />
+                        <SidebarItem icon="⚜️" label="Logo Forge" active={activeModule === 'logo'} onClick={() => setActiveModule('logo')} />
+                        <SidebarItem icon="🏔️" label="World Builder" active={activeModule === 'environment'} onClick={() => setActiveModule('environment')} />
+                        <SidebarItem icon="🧱" label="Texture Forge" active={activeModule === 'texture'} onClick={() => setActiveModule('texture')} />
+                        <SidebarItem icon="🎨" label="Asset Editor" active={activeModule === 'editor'} onClick={() => setActiveModule('editor')} />
+                    </div>
+                    <div>
+                        <p className="px-4 text-[10px] font-bold text-gray-600 uppercase tracking-wider mb-2">Storage</p>
+                        <SidebarItem icon="📦" label="Inventory" active={activeModule === 'library'} onClick={() => setActiveModule('library')} />
+                    </div>
                 </nav>
-
-                <div className="mt-auto px-4 py-4 bg-gray-900/50 rounded-xl border border-gray-800">
-                    <p className="text-xs text-gray-500 mb-1">AI Models Active</p>
-                    <div className="flex items-center gap-2 mb-1">
-                        <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                        <span className="text-xs font-bold text-gray-300">Gemini 3.0 Pro</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                        <span className="text-xs font-bold text-gray-300">Imagen 4.0</span>
-                    </div>
-                </div>
             </aside>
 
-            {/* Main Content */}
-            <main className="flex-1 relative overflow-hidden">
-                {/* Background Grid */}
+            <main className="flex-1 relative flex flex-col min-w-0">
                 <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/noisy-grid.png')] opacity-5 pointer-events-none z-0"></div>
-                
-                {/* Content Area */}
-                <div className="relative z-10 h-full p-8 overflow-y-auto">
-                    {activeModule === 'logo' && <LogoStudio />}
-                    {activeModule === 'environment' && <EnvironmentStudio />}
-                    {activeModule === 'texture' && <TextureForge />}
-                    {activeModule === 'editor' && <AssetEditor />}
-                    {activeModule === 'ideation' && <IdeationStudio />}
+                <div className="relative z-10 flex-1 p-6 overflow-hidden">
+                    {activeModule === 'inspector' && <Inspector onSave={addToLibrary} />}
+                    {activeModule === 'interface' && <InterfaceStudio onSave={addToLibrary} />}
+                    {activeModule === 'logo' && <LogoStudio onSave={addToLibrary} />}
+                    {activeModule === 'environment' && <EnvironmentStudio onSave={addToLibrary} />}
+                    {activeModule === 'texture' && <TextureForge onSave={addToLibrary} />}
+                    {activeModule === 'editor' && <AssetEditor onSave={addToLibrary} />}
+                    {activeModule === 'library' && <AssetLibrary assets={library} onDelete={deleteFromLibrary} />}
                 </div>
             </main>
         </div>

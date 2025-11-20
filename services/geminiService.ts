@@ -20,8 +20,6 @@ const fileToGenerativePart = async (file: File) => {
 };
 
 // --- The "Art Director" Agent ---
-// This uses Gemini 3 Pro's reasoning capabilities to turn a simple user intent
-// into a professional-grade prompt for the image generator.
 const enhancePrompt = async (userPrompt: string, context: string, specificDetails: string): Promise<string> => {
     const systemPrompt = `
     You are an expert Lead Game Artist and Technical Artist. 
@@ -41,7 +39,7 @@ const enhancePrompt = async (userPrompt: string, context: string, specificDetail
         model: 'gemini-3-pro-preview',
         contents: systemPrompt,
         config: {
-            thinkingConfig: { thinkingBudget: 2048 }, // Allow some thinking for creative expansion
+            thinkingConfig: { thinkingBudget: 2048 }, 
         }
     });
 
@@ -52,27 +50,25 @@ const enhancePrompt = async (userPrompt: string, context: string, specificDetail
 
 export const generateProfessionalAsset = async (
     userPrompt: string, 
-    assetType: 'logo' | 'banner' | 'texture',
+    assetType: 'logo' | 'banner' | 'texture' | 'ui',
     styleProfile: string,
     aspectRatio: string = '1:1'
 ): Promise<string> => {
     
-    // 1. Refine the prompt using the "Art Director"
     const enhancedPrompt = await enhancePrompt(
         userPrompt,
         `Generating a professional ${assetType} for a video game. Style goal: ${styleProfile}.`,
-        `Ensure the asset is high-resolution. For logos: vector style, clean background. For textures: seamless, tileable. For banners: cinematic composition.`
+        `Ensure the asset is high-resolution. For logos: vector style. For textures: seamless, tileable. For banners: cinematic. For UI: isolatable elements on plain background.`
     );
 
     console.log(`[Art Director] Enhanced Prompt: ${enhancedPrompt}`);
 
-    // 2. Generate using Imagen 4.0 for maximum quality
     const response = await ai.models.generateImages({
         model: 'imagen-4.0-generate-001',
         prompt: enhancedPrompt,
         config: {
             numberOfImages: 1,
-            aspectRatio: aspectRatio as any, // Type casting for SDK compatibility
+            aspectRatio: aspectRatio as any,
             outputMimeType: 'image/jpeg'
         }
     });
@@ -85,7 +81,141 @@ export const generateProfessionalAsset = async (
     throw new Error("Failed to generate professional asset.");
 };
 
-// --- Editing & Ref-Based Services (Gemini 2.5 Flash) ---
+// --- Texture Extraction & Seamless Tiling ---
+
+export const extractTextureFromImage = async (referenceImage: File, makeSeamless: boolean = false): Promise<{ textureUrl: string, materialAnalysis: string }> => {
+    // 1. Analyze the surface properties using Vision
+    const imagePart = await fileToGenerativePart(referenceImage);
+    
+    let analysisPrompt = `
+    Analyze this image for game texture usage. 
+    Describe the surface material in technical detail (Albedo, Roughness, Normal details).
+    Focus on the pattern, material age, and surface imperfections.
+    `;
+    
+    if (makeSeamless) {
+        analysisPrompt += " Explicitly describe how to make this pattern seamless and tileable, removing any vignetting or uneven lighting.";
+    }
+
+    const analysisResponse = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: { parts: [imagePart, { text: analysisPrompt }] },
+    });
+
+    const materialDescription = analysisResponse.text || "A detailed game texture";
+
+    // 2. Re-synthesize using Imagen
+    const textureUrl = await generateProfessionalAsset(
+        materialDescription,
+        'texture',
+        makeSeamless ? 'Seamless Tiled PBR Material' : 'Photorealistic PBR',
+        '1:1'
+    );
+
+    return { textureUrl, materialAnalysis: materialDescription };
+};
+
+// --- Inspector: Engine-Specific Analysis & Remastering ---
+
+export interface AnalysisReport {
+    critique: string;
+    technicalIssues: string[];
+    engineSuggestions: string;
+    remasterPrompt: string;
+}
+
+export const analyzeForEngine = async (image: File, engine: string): Promise<AnalysisReport> => {
+    const imagePart = await fileToGenerativePart(image);
+    
+    const prompt = `
+    Act as a Senior Technical Artist specializing in ${engine}.
+    Analyze this game asset.
+    
+    1. Critique: Evaluate the visual quality, style consistency, and suitability for ${engine}.
+    2. Technical Issues: List specific flaws (e.g., "Low texel density", "Baked-in lighting shadows", "Noisy normals", "Bad composition").
+    3. Improvements: Suggest specific changes to meet ${engine} "AAA" standards.
+    4. Remaster Prompt: Write a highly detailed image generation prompt to recreate this asset with all the suggested improvements applied.
+    
+    Output Format: JSON with keys: "critique", "technicalIssues" (array of strings), "engineSuggestions", "remasterPrompt".
+    `;
+
+    const response = await ai.models.generateContent({
+        model: 'gemini-3-pro-preview',
+        contents: { parts: [imagePart, { text: prompt }] },
+        config: {
+            responseMimeType: "application/json",
+            thinkingConfig: { thinkingBudget: 4096 }
+        }
+    });
+
+    try {
+        return JSON.parse(response.text || "{}");
+    } catch (e) {
+        console.error("Failed to parse JSON", response.text);
+        throw new Error("Analysis failed to produce valid report.");
+    }
+};
+
+// --- UI/GUI Studio Services ---
+
+export const extractUiStyle = async (referenceImage: File): Promise<string> => {
+    const imagePart = await fileToGenerativePart(referenceImage);
+    const prompt = `
+    Analyze this image to create a "UI Design System" document.
+    Extract the following visual rules:
+    - Color Palette (Primary, Secondary, Accent)
+    - Shape Language (Rounded, Sharp, Organic)
+    - Border/Frame Styles (Metallic, Glowing, Minimal)
+    - Texture/Backgrounds within UI elements
+    
+    Summarize this into a single descriptive paragraph that can be used as a style guide for generating other matching UI components.
+    `;
+
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: { parts: [imagePart, { text: prompt }] },
+    });
+
+    return response.text || "Cyberpunk minimalist interface with neon blue accents.";
+};
+
+export const generateUiComponent = async (styleGuide: string, componentType: string): Promise<string> => {
+    const prompt = `
+    Create a game UI asset: ${componentType}.
+    
+    Adhere strictly to this Style Guide:
+    ${styleGuide}
+    
+    Requirements:
+    - High resolution, crisp edges.
+    - Isolated on a plain background (easy to crop).
+    - Professional game UI quality (e.g., RPG, Sci-Fi, Fantasy).
+    - If it's a panel/window, ensure the content area is clear.
+    `;
+
+    return generateProfessionalAsset(prompt, 'ui', 'Game User Interface', '1:1');
+};
+
+
+// --- Reverse Engineering (Image to Prompt) ---
+
+export const reverseEngineerPrompt = async (image: File): Promise<string> => {
+    const imagePart = await fileToGenerativePart(image);
+    const prompt = `
+    Act as a Prompt Engineer. Analyze this image and write the exact prompt used to generate it.
+    Include details on: Subject, Art Style, Lighting, Color Palette, and Composition.
+    Format it as a single, high-quality prompt string ready for an image generator.
+    `;
+
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: { parts: [imagePart, { text: prompt }] }
+    });
+
+    return response.text || "Could not analyze image.";
+};
+
+// --- Editing Services ---
 
 export const editGameAsset = async (image: File, mask: File | null, instruction: string): Promise<string> => {
     const imagePart = await fileToGenerativePart(image);
@@ -103,7 +233,7 @@ export const editGameAsset = async (image: File, mask: File | null, instruction:
     parts.push({ text: finalPrompt });
   
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image', // Best for multimodal editing
+      model: 'gemini-2.5-flash-image', 
       contents: { parts: parts },
       config: { responseModalities: [Modality.IMAGE] },
     });
@@ -114,76 +244,4 @@ export const editGameAsset = async (image: File, mask: File | null, instruction:
     }
     
     throw new Error("Edit generation failed.");
-};
-
-export const generateConceptFromRef = async (
-    referenceImage: File,
-    prompt: string,
-    style: string
-): Promise<string> => {
-    const imagePart = await fileToGenerativePart(referenceImage);
-    const finalPrompt = `
-    Analyze the reference image. Use its color palette and composition as inspiration to create a new game asset.
-    Prompt: ${prompt}
-    Style: ${style}
-    `;
-
-    const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: { parts: [imagePart, { text: finalPrompt }] },
-        config: { responseModalities: [Modality.IMAGE] },
-    });
-
-    const firstPart = response.candidates?.[0]?.content?.parts?.[0];
-    if (firstPart?.inlineData) {
-      return `data:${firstPart.inlineData.mimeType};base64,${firstPart.inlineData.data}`;
-    }
-    
-    throw new Error("Reference-based generation failed.");
-};
-
-// --- Analysis & Ideation (Gemini 3 Pro) ---
-
-export const analyzeAssetForDev = async (image: File): Promise<{
-    style: string;
-    mood: string;
-    technicalNotes: string;
-    usageSuggestions: string[];
-}> => {
-    const imagePart = await fileToGenerativePart(image);
-    const prompt = `
-    Act as a Lead Technical Artist. Analyze this image for a game asset library.
-    Provide the output in JSON format with the following keys:
-    - style: The visual style (e.g., Low Poly, Pixel Art, Hyperrealistic).
-    - mood: The emotional tone.
-    - technicalNotes: Notes on lighting, texture quality, or perspective.
-    - usageSuggestions: An array of 3 potential uses in a game (e.g., "Inventory Icon", "Loading Screen").
-    `;
-
-    const response = await ai.models.generateContent({
-        model: 'gemini-3-pro-preview',
-        contents: { parts: [imagePart, { text: prompt }] },
-        config: {
-            responseMimeType: "application/json",
-            thinkingConfig: { thinkingBudget: 1024 }
-        }
-    });
-
-    return JSON.parse(response.text || "{}");
-};
-
-export const brainstormGameMechanics = async (concept: string): Promise<string> => {
-    const prompt = `
-    Act as a Senior Game Designer. 
-    Brainstorm 3 unique game mechanics or loop ideas based on this concept: "${concept}".
-    Format the output as a clean Markdown list with bold headers.
-    `;
-
-    const response = await ai.models.generateContent({
-        model: 'gemini-3-pro-preview',
-        contents: prompt,
-        config: { thinkingConfig: { thinkingBudget: 4096 } }
-    });
-
-    return response.text;
 };
