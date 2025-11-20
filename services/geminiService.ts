@@ -50,7 +50,7 @@ const enhancePrompt = async (userPrompt: string, context: string, specificDetail
 
 export const generateProfessionalAsset = async (
     userPrompt: string, 
-    assetType: 'logo' | 'banner' | 'texture' | 'ui' | 'cookie' | 'noise',
+    assetType: 'logo' | 'banner' | 'texture' | 'ui' | 'cookie' | 'noise' | 'ui-visual',
     styleProfile: string,
     aspectRatio: string = '1:1'
 ): Promise<string> => {
@@ -63,6 +63,11 @@ export const generateProfessionalAsset = async (
     if (assetType === 'ui') specificConstraints += " Isolatable elements on plain background, user interface design.";
     if (assetType === 'noise') specificConstraints += " Grayscale heightmap, high contrast, mathematical procedural pattern, flat lighting, no shading, 4k resolution. Suitable for VFX shaders.";
     if (assetType === 'cookie') specificConstraints += " High contrast Black and White only (Gobo). Pure black background (blocks light), White shapes (allows light). Sharp defined edges for shadow projection. No greyscale unless specified for softness.";
+    
+    // New Visual-Only UI Constraint
+    if (assetType === 'ui-visual') {
+        specificConstraints += " STRICTLY NO TEXT. NO NUMBERS. NO ALPHABET. Purely graphical game asset. High fidelity rendering. Isolated on a solid plain background (easy to mask). Focus on material, shape, and lighting. Iconography or abstract UI shapes only.";
+    }
 
     const enhancedPrompt = await enhancePrompt(
         userPrompt,
@@ -165,19 +170,23 @@ export const analyzeForEngine = async (image: File, engine: string): Promise<Ana
     }
 };
 
-// --- UI/GUI Studio Services ---
+// --- UI/GUI Studio Services (Visual Only Redesign) ---
 
-export const extractUiStyle = async (referenceImage: File): Promise<string> => {
+export const extractVisualStyle = async (referenceImage: File): Promise<string> => {
     const imagePart = await fileToGenerativePart(referenceImage);
     const prompt = `
-    Analyze this image to create a "UI Design System" document.
-    Extract the following visual rules:
-    - Color Palette (Primary, Secondary, Accent)
-    - Shape Language (Rounded, Sharp, Organic)
-    - Border/Frame Styles (Metallic, Glowing, Minimal)
-    - Texture/Backgrounds within UI elements
+    Analyze the visual art style of this image to create a "Visual Style Clone" description.
     
-    Summarize this into a single descriptive paragraph that can be used as a style guide for generating other matching UI components.
+    IGNORE all text, numbers, fonts, and labels. Pretend they do not exist.
+    
+    Focus ONLY on:
+    - Rendering technique (e.g., flat vector, 3D glossy, hand-painted, pixel art, holographic).
+    - Material properties (e.g., brushed metal, glass, neon light, stone, wood).
+    - Lighting and effects (e.g., bloom, rim lighting, soft shadows).
+    - Shape language (e.g., rounded corners, sharp angular spikes, intricate filigree).
+    - Color palette.
+    
+    Summarize this into a single, dense visual description paragraph that can be used to generate NEW objects in this EXACT style.
     `;
 
     const response = await ai.models.generateContent({
@@ -185,24 +194,24 @@ export const extractUiStyle = async (referenceImage: File): Promise<string> => {
         contents: { parts: [imagePart, { text: prompt }] },
     });
 
-    return response.text || "Cyberpunk minimalist interface with neon blue accents.";
+    return response.text || "High quality game art style.";
 };
 
-export const generateUiComponent = async (styleGuide: string, componentType: string): Promise<string> => {
+export const generateVisualElement = async (styleGuide: string, itemDescription: string): Promise<string> => {
     const prompt = `
-    Create a game UI asset: ${componentType}.
+    Create a Game UI Visual Asset: ${itemDescription}.
     
-    Adhere strictly to this Style Guide:
+    Target Visual Style:
     ${styleGuide}
     
-    Requirements:
-    - High resolution, crisp edges.
-    - Isolated on a plain background (easy to crop).
-    - Professional game UI quality (e.g., RPG, Sci-Fi, Fantasy).
-    - If it's a panel/window, ensure the content area is clear.
+    CRITICAL CONSTRAINTS:
+    - ABSOLUTELY NO TEXT. NO NUMBERS. NO LETTERS. NO SYMBOLS.
+    - The image must be PURELY graphical/pictorial.
+    - If the request implies a button or panel, draw ONLY the background shape, frame, or icon art.
+    - High resolution, isolated on a plain solid background.
     `;
 
-    return generateProfessionalAsset(prompt, 'ui', 'Game User Interface', '1:1');
+    return generateProfessionalAsset(prompt, 'ui-visual', 'Visual Style Clone', '1:1');
 };
 
 
@@ -310,11 +319,48 @@ export const generateVfxAsset = async (params: VfxParams, quality: 'draft' | 'pr
     }
 };
 
-// Deprecated simple wrappers kept for compatibility if needed, but UI now uses generateVfxAsset
+// --- UV Painting Services ---
+
+export const paintUVTexture = async (uvImage: File, objectType: string, style: string, colors: string): Promise<string> => {
+    const imagePart = await fileToGenerativePart(uvImage);
+    
+    // Specialized prompt for UV mapping
+    const prompt = `
+    Act as a 3D Texture Artist. 
+    Task: Paint a diffuse texture map based directly on the provided UV Layout image.
+    
+    Target Object: ${objectType}
+    Art Style: ${style}
+    Color Palette: ${colors}
+    
+    Instructions:
+    1. Analyze the UV islands (wireframe shapes) in the input image to understand the 3D geometry.
+    2. Generate a full-color texture map that perfectly aligns with these UV islands.
+    3. Apply detailed materials (e.g., metal scratches, fabric weave, skin pores) inside the islands.
+    4. Maintain the exact position and scale of the UV islands.
+    5. Background (void space) should be distinct from the texture.
+    `;
+
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: { parts: [imagePart, { text: prompt }] },
+        config: { responseModalities: [Modality.IMAGE] },
+    });
+
+    const firstPart = response.candidates?.[0]?.content?.parts?.[0];
+    if (firstPart?.inlineData) {
+        return `data:${firstPart.inlineData.mimeType};base64,${firstPart.inlineData.data}`;
+    }
+    throw new Error("UV Painting failed. Please try a different image or prompt.");
+};
+
+// Deprecated wrappers
 export const generateNoiseTexture = async (noiseType: string): Promise<string> => {
     return generateVfxAsset({ type: noiseType, category: 'noise' }, 'pro');
 };
-
 export const generateLightCookie = async (cookieType: string): Promise<string> => {
     return generateVfxAsset({ type: cookieType, category: 'cookie' }, 'pro');
 };
+// Backwards compatibility for App.tsx until it's updated
+export const extractUiStyle = async (f: File) => extractVisualStyle(f);
+export const generateUiComponent = async (s: string, c: string) => generateVisualElement(s, c);

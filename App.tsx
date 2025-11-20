@@ -5,16 +5,17 @@ import {
     extractTextureFromImage,
     reverseEngineerPrompt,
     analyzeForEngine,
-    extractUiStyle,
-    generateUiComponent,
+    extractVisualStyle,
+    generateVisualElement,
     generateVfxAsset,
+    paintUVTexture,
     AnalysisReport
 } from './services/geminiService';
 
 // --- Types ---
 interface Asset {
     id: string;
-    type: 'logo' | 'banner' | 'texture' | 'edit' | 'ui' | 'remaster' | 'noise' | 'cookie';
+    type: 'logo' | 'banner' | 'texture' | 'edit' | 'ui' | 'remaster' | 'noise' | 'cookie' | 'uv';
     url: string;
     prompt: string;
     createdAt: Date;
@@ -207,46 +208,53 @@ const Inspector: React.FC<{ onSave: (asset: Asset) => void }> = ({ onSave }) => 
     );
 }
 
-// 2. Interface Studio (GUI Generator)
+// 2. Interface Studio (REDESIGNED - Visual Only)
 const InterfaceStudio: React.FC<{ onSave: (asset: Asset) => void }> = ({ onSave }) => {
-    const [styleRef, setStyleRef] = useState<File | null>(null);
-    const [styleDesc, setStyleDesc] = useState('');
+    const [refImage, setRefImage] = useState<File | null>(null);
+    const [refPreview, setRefPreview] = useState<string | null>(null);
+    const [targetPrompt, setTargetPrompt] = useState('');
+    const [extractedStyle, setExtractedStyle] = useState('');
     const [loading, setLoading] = useState(false);
-    const [generatedItems, setGeneratedItems] = useState<Asset[]>([]);
-    
-    // Quick select components
-    const components = [
-        "Main Menu Button", "Health Bar", "Inventory Grid Slot", 
-        "Dialog Box Background", "Skill Icon Frame", "Settings Toggle Switch"
-    ];
-    const [selectedComp, setSelectedComp] = useState(components[0]);
+    const [generatedItem, setGeneratedItem] = useState<Asset | null>(null);
+    const [analysisStatus, setAnalysisStatus] = useState('');
 
-    const handleAnalyzeStyle = async (file: File) => {
-        setLoading(true);
-        try {
-            const desc = await extractUiStyle(file);
-            setStyleDesc(desc);
-            setStyleRef(file);
-        } catch (e) {
-            alert("Failed to analyze UI style.");
-        } finally {
-            setLoading(false);
+    const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files?.[0]) {
+            const file = e.target.files[0];
+            setRefImage(file);
+            setRefPreview(URL.createObjectURL(file));
+            
+            // Auto-analyze on upload
+            setLoading(true);
+            setAnalysisStatus("Scanning visual features...");
+            try {
+                const style = await extractVisualStyle(file);
+                setExtractedStyle(style);
+                setAnalysisStatus("Style cloned successfully.");
+            } catch (e) {
+                setAnalysisStatus("Failed to extract style.");
+            } finally {
+                setLoading(false);
+            }
         }
     };
 
     const handleGenerate = async () => {
-        if (!styleDesc) return;
+        if (!targetPrompt) return;
         setLoading(true);
         try {
-            const url = await generateUiComponent(styleDesc, selectedComp);
+            // If no image, we use a generic high-quality style, or the user can type style in prompt
+            const styleToUse = extractedStyle || "High-quality generic game UI style. Clean, modern, functional.";
+            const url = await generateVisualElement(styleToUse, targetPrompt);
+            
             const newAsset: Asset = {
                 id: Date.now().toString(),
                 type: 'ui',
                 url,
-                prompt: `[${selectedComp}] ${styleDesc}`,
+                prompt: `[Visual Gen] ${targetPrompt}`,
                 createdAt: new Date()
             };
-            setGeneratedItems([newAsset, ...generatedItems]);
+            setGeneratedItem(newAsset);
             onSave(newAsset);
         } catch (e) {
             alert(e);
@@ -257,73 +265,97 @@ const InterfaceStudio: React.FC<{ onSave: (asset: Asset) => void }> = ({ onSave 
 
     return (
         <div className="flex flex-col lg:flex-row gap-6 h-full">
+            {/* Controls */}
             <div className="lg:w-1/3 flex flex-col gap-4 overflow-y-auto">
-                <h2 className="text-3xl font-display font-bold text-white">Interface Studio</h2>
-                <p className="text-gray-400 text-sm">Create consistent GUI packages.</p>
+                <div>
+                    <h2 className="text-3xl font-display font-bold text-white mb-1">Visual Interface</h2>
+                    <p className="text-gray-400 text-sm">Create strictly visual, text-free UI assets.</p>
+                </div>
 
-                <div className="bg-game-panel p-4 rounded-xl border border-gray-800 space-y-4">
-                     <div className="relative">
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">1. Style Reference</label>
-                        <div className="flex gap-2">
-                            <div className="relative flex-1 bg-gray-900 rounded h-20 flex items-center justify-center border border-gray-700 cursor-pointer hover:border-game-accent overflow-hidden">
-                                <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => e.target.files?.[0] && handleAnalyzeStyle(e.target.files[0])} />
-                                {styleRef ? (
-                                    <img src={URL.createObjectURL(styleRef)} className="w-full h-full object-cover opacity-50" />
-                                ) : (
-                                    <span className="text-xs text-gray-400">Upload Image</span>
-                                )}
-                            </div>
+                <div className="bg-game-panel p-5 rounded-xl border border-gray-800 space-y-6 shadow-xl">
+                    
+                    {/* Step 1: Style Source */}
+                    <div className="space-y-2">
+                        <div className="flex justify-between items-center">
+                            <label className="text-xs font-bold text-blue-400 uppercase tracking-wider">1. Style Source (Optional)</label>
+                            {refPreview && <button onClick={() => {setRefImage(null); setRefPreview(null); setExtractedStyle('');}} className="text-[10px] text-red-400 hover:underline">CLEAR</button>}
                         </div>
-                     </div>
+                        
+                        <div className={`border-2 border-dashed rounded-lg transition-all relative overflow-hidden h-32 flex items-center justify-center cursor-pointer group
+                            ${refPreview ? 'border-blue-500 bg-black' : 'border-gray-700 hover:border-blue-400 bg-black/20'}`}>
+                            
+                            <input type="file" onChange={handleUpload} className="absolute inset-0 opacity-0 cursor-pointer z-10" accept="image/*" />
+                            
+                            {refPreview ? (
+                                <img src={refPreview} className="h-full w-full object-cover opacity-60 group-hover:opacity-40 transition-opacity" />
+                            ) : (
+                                <div className="text-center pointer-events-none">
+                                    <div className="text-2xl mb-1">🧬</div>
+                                    <p className="text-xs font-bold text-gray-400">Drop Image to Clone Style</p>
+                                </div>
+                            )}
+                            
+                            {refPreview && (
+                                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                    <span className="bg-blue-600/90 text-white text-[10px] px-2 py-1 rounded shadow uppercase font-bold">Style Locked</span>
+                                </div>
+                            )}
+                        </div>
+                        {analysisStatus && <p className="text-[10px] text-gray-500 text-right italic">{analysisStatus}</p>}
+                    </div>
 
-                     <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">2. Style Guide (Editable)</label>
+                    {/* Step 2: Generation Prompt */}
+                    <div className="space-y-2">
+                        <label className="text-xs font-bold text-blue-400 uppercase tracking-wider">2. Visual Element Description</label>
                         <textarea 
-                            value={styleDesc}
-                            onChange={(e) => setStyleDesc(e.target.value)}
-                            placeholder="Or describe style here (e.g., Steampunk brass with rivets...)"
-                            className="w-full bg-gray-900 border border-gray-700 rounded p-2 text-white h-32 text-sm focus:border-game-accent outline-none"
+                            value={targetPrompt}
+                            onChange={(e) => setTargetPrompt(e.target.value)}
+                            placeholder="Describe the visual object: e.g., 'A glowing shield icon', 'A hexagonal frame', 'A health orb'."
+                            className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white h-28 resize-none focus:border-blue-500 outline-none text-sm"
                         />
-                     </div>
+                        <p className="text-[10px] text-gray-500">
+                            <span className="text-red-400 font-bold">NOTE:</span> AI is strictly instructed to generate NO TEXT. 
+                            Describe visuals only.
+                        </p>
+                    </div>
 
-                     <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">3. Component to Build</label>
-                        <select 
-                            value={selectedComp}
-                            onChange={(e) => setSelectedComp(e.target.value)}
-                            className="w-full bg-gray-900 border border-gray-700 rounded p-2 text-white mb-4"
-                        >
-                            {components.map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
-                        <button 
-                            onClick={handleGenerate} 
-                            disabled={loading || !styleDesc}
-                            className="w-full py-3 bg-gradient-to-r from-blue-600 to-cyan-600 rounded font-bold text-white hover:shadow-lg hover:shadow-blue-900/20 transition-all disabled:opacity-50"
-                        >
-                            {loading ? <Spinner /> : 'GENERATE COMPONENT'}
-                        </button>
-                     </div>
+                    <button 
+                        onClick={handleGenerate} 
+                        disabled={loading || !targetPrompt}
+                        className="w-full py-4 bg-gradient-to-r from-blue-600 to-cyan-600 rounded-lg font-display font-bold text-white shadow-lg hover:shadow-blue-500/25 transition-all disabled:opacity-50"
+                    >
+                        {loading ? <Spinner /> : 'GENERATE VISUAL'}
+                    </button>
                 </div>
             </div>
 
-            <div className="lg:w-2/3 bg-black/40 rounded-2xl border border-gray-800 p-4 overflow-y-auto">
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                    {generatedItems.length === 0 ? (
-                        <div className="col-span-full flex flex-col items-center justify-center h-64 text-gray-600">
-                            <div className="text-4xl mb-2">🖥️</div>
-                            <p>No UI assets generated yet.</p>
-                        </div>
-                    ) : (
-                        generatedItems.map(item => (
-                            <div key={item.id} className="bg-[url('https://www.transparenttextures.com/patterns/ps-neutral.png')] bg-gray-800 rounded-lg p-4 flex flex-col items-center relative group border border-gray-700 hover:border-blue-500 transition-colors">
-                                <img src={item.url} className="max-h-32 object-contain drop-shadow-lg" />
-                                <div className="absolute inset-0 bg-black/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 rounded-lg">
-                                     <a href={item.url} download="ui-asset.png" className="text-white font-bold text-sm hover:text-blue-400">Download</a>
-                                </div>
+            {/* Output Area */}
+            <div className="lg:w-2/3 bg-black/40 rounded-2xl border border-gray-800 flex flex-col items-center justify-center min-h-[400px] relative overflow-hidden p-8">
+                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/graphy.png')] opacity-10 pointer-events-none"></div>
+                
+                {generatedItem ? (
+                    <div className="relative z-10 flex flex-col items-center w-full h-full animate-in zoom-in-95 duration-300">
+                        <div className="relative bg-[url('https://www.transparenttextures.com/patterns/ps-neutral.png')] bg-gray-800 p-1 rounded shadow-2xl border border-gray-700">
+                            <img src={generatedItem.url} className="max-h-[500px] rounded object-contain bg-gray-900/50" />
+                            <div className="absolute top-4 right-4 flex gap-2">
+                                <span className="bg-black/60 text-white text-[10px] px-2 py-1 rounded border border-white/10 backdrop-blur-sm">NO TEXT MODE</span>
                             </div>
-                        ))
-                    )}
-                </div>
+                        </div>
+                        
+                        <div className="mt-6 flex gap-4">
+                            <a href={generatedItem.url} download={`visual-ui-${Date.now()}.png`} className="px-8 py-3 bg-blue-600 rounded-full font-bold text-white hover:bg-blue-500 shadow-lg transition-transform hover:scale-105 flex items-center gap-2">
+                                <span>Download Asset</span>
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                            </a>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="text-center opacity-30 z-10 select-none">
+                        <div className="text-8xl mb-4">👁️</div>
+                        <p className="font-display text-2xl tracking-widest">VISUAL REPLICATOR</p>
+                        <p className="text-sm mt-2">Upload reference style or describe object</p>
+                    </div>
+                )}
             </div>
         </div>
     );
@@ -719,7 +751,6 @@ const VFXStudio: React.FC<{ onSave: (asset: Asset) => void }> = ({ onSave }) => 
     );
 }
 
-
 // 7. Asset Editor
 const AssetEditor: React.FC<{ onSave: (asset: Asset) => void }> = ({ onSave }) => {
     const [image, setImage] = useState<File | null>(null);
@@ -783,7 +814,173 @@ const AssetEditor: React.FC<{ onSave: (asset: Asset) => void }> = ({ onSave }) =
     );
 }
 
-// 8. Asset Library (Standard)
+// 8. UV Painter (New)
+const UVPainter: React.FC<{ onSave: (asset: Asset) => void }> = ({ onSave }) => {
+    const [uvImage, setUvImage] = useState<File | null>(null);
+    const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+    const [objectType, setObjectType] = useState('');
+    const [style, setStyle] = useState('');
+    const [colors, setColors] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [status, setStatus] = useState('');
+    const [resultUrl, setResultUrl] = useState<string | null>(null);
+
+    const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files?.[0]) {
+            const file = e.target.files[0];
+            setUvImage(file);
+            setPreviewUrl(URL.createObjectURL(file));
+            setResultUrl(null);
+        }
+    };
+
+    const handlePaint = async () => {
+        if (!uvImage || !objectType) return;
+        setLoading(true);
+        
+        // Simulated Status Sequence for "Logical" Feel
+        const sequence = ["Analyzing UV Islands...", "Calculating Geometry...", "Generating Base Coat...", "Applying Detail Pass..."];
+        let step = 0;
+        setStatus(sequence[0]);
+        
+        const interval = setInterval(() => {
+            step++;
+            if (step < sequence.length) setStatus(sequence[step]);
+        }, 2000); // Change message every 2s while waiting
+
+        try {
+            const url = await paintUVTexture(uvImage, objectType, style || "Realistic", colors || "Standard");
+            setResultUrl(url);
+            onSave({
+                id: Date.now().toString(),
+                type: 'uv',
+                url: url,
+                prompt: `[UV Paint] ${objectType} - ${style}`,
+                createdAt: new Date()
+            });
+        } catch (e) {
+            alert(e);
+        } finally {
+            clearInterval(interval);
+            setLoading(false);
+            setStatus('');
+        }
+    };
+
+    return (
+        <div className="flex flex-col lg:flex-row gap-6 h-full">
+            <div className="lg:w-1/3 flex flex-col gap-6 overflow-y-auto pr-2">
+                <div>
+                    <h2 className="text-3xl font-display font-bold text-white mb-2">UV Atelier</h2>
+                    <p className="text-gray-400 text-sm">Texture painting on existing UV layouts.</p>
+                </div>
+
+                <div className="bg-game-panel p-6 rounded-2xl border border-gray-800 shadow-xl space-y-4">
+                    {/* Input 1: Upload */}
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">1. UV Wireframe</label>
+                        <div className="border-2 border-dashed border-gray-700 rounded-lg p-6 text-center hover:border-teal-500 transition-colors relative cursor-pointer bg-black/20">
+                            <input type="file" onChange={handleUpload} className="absolute inset-0 opacity-0 cursor-pointer" accept="image/*" />
+                            {previewUrl ? (
+                                <img src={previewUrl} className="max-h-24 mx-auto opacity-70" />
+                            ) : (
+                                <>
+                                    <div className="text-2xl mb-1">🕸️</div>
+                                    <span className="text-xs text-gray-400">Upload UV Layout</span>
+                                </>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Input 2: Object Def */}
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">2. Object Definition</label>
+                        <input 
+                            type="text" 
+                            value={objectType}
+                            onChange={(e) => setObjectType(e.target.value)}
+                            placeholder="e.g., Sci-Fi Crate, Medieval Shield"
+                            className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white focus:border-teal-500 outline-none"
+                        />
+                    </div>
+
+                    {/* Input 3: Style */}
+                    <div className="grid grid-cols-2 gap-2">
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Style</label>
+                            <select value={style} onChange={(e) => setStyle(e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-white">
+                                <option value="">Select Style...</option>
+                                <option value="PBR Realistic">PBR Realistic</option>
+                                <option value="Hand Painted (Stylized)">Hand Painted</option>
+                                <option value="Cyberpunk / Neon">Cyberpunk</option>
+                                <option value="Rusty / Worn">Rusty / Worn</option>
+                                <option value="Clean Vector">Clean Vector</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Color</label>
+                            <input 
+                                type="text" 
+                                value={colors}
+                                onChange={(e) => setColors(e.target.value)}
+                                placeholder="e.g., Gold & Red"
+                                className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-white focus:border-teal-500 outline-none"
+                            />
+                        </div>
+                    </div>
+
+                    <button 
+                        onClick={handlePaint} 
+                        disabled={loading || !uvImage || !objectType}
+                        className="w-full py-4 bg-gradient-to-r from-teal-600 to-emerald-600 rounded-lg font-display font-bold text-white shadow-lg disabled:opacity-50 mt-4"
+                    >
+                        {loading ? (
+                            <div className="flex flex-col items-center justify-center">
+                                <Spinner />
+                                <span className="text-[10px] mt-1 font-mono text-teal-200">{status}</span>
+                            </div>
+                        ) : 'PAINT TEXTURE'}
+                    </button>
+                </div>
+            </div>
+
+            {/* Preview Area */}
+            <div className="lg:w-2/3 bg-black/40 rounded-2xl border border-gray-800 flex items-center justify-center min-h-[400px] relative overflow-hidden">
+                <div className="absolute inset-0 grid grid-cols-2 pointer-events-none opacity-20">
+                     {/* Background Grid */}
+                     <div className="border-r border-gray-700 h-full"></div>
+                     <div className="h-full"></div>
+                </div>
+
+                {resultUrl ? (
+                    <div className="relative z-10 flex flex-col items-center w-full h-full p-6">
+                         <div className="flex-1 flex gap-4 w-full justify-center items-center">
+                            {/* Compare View */}
+                            <div className="relative w-1/2 aspect-square bg-gray-900 rounded border border-gray-700 overflow-hidden">
+                                <img src={previewUrl!} className="w-full h-full object-contain opacity-50" />
+                                <div className="absolute bottom-2 left-2 bg-black/60 px-2 rounded text-[10px] text-gray-400">INPUT UV</div>
+                            </div>
+                            <div className="text-2xl text-gray-600">➔</div>
+                            <div className="relative w-1/2 aspect-square bg-gray-900 rounded border border-teal-500 shadow-[0_0_20px_rgba(20,184,166,0.2)] overflow-hidden">
+                                <img src={resultUrl} className="w-full h-full object-contain" />
+                                <div className="absolute bottom-2 left-2 bg-black/60 px-2 rounded text-[10px] text-teal-400 font-bold">OUTPUT TEXTURE</div>
+                            </div>
+                         </div>
+                         <a href={resultUrl} download="uv-texture.png" className="mt-6 px-8 py-3 bg-teal-600 rounded font-bold text-white hover:bg-teal-500 shadow-lg">Download Texture Map</a>
+                    </div>
+                ) : (
+                    <div className="text-center opacity-30 z-10">
+                        <div className="text-8xl mb-4">🎨</div>
+                        <p className="font-display text-2xl tracking-widest">UV WORKSPACE</p>
+                        <p className="text-sm mt-2">Upload a UV map to begin painting</p>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+// 9. Asset Library (Standard)
 const AssetLibrary: React.FC<{ assets: Asset[], onDelete: (id: string) => void }> = ({ assets, onDelete }) => {
     return (
         <div className="h-full flex flex-col">
@@ -812,7 +1009,7 @@ const AssetLibrary: React.FC<{ assets: Asset[], onDelete: (id: string) => void }
 // --- Main Layout ---
 
 const App: React.FC = () => {
-    const [activeModule, setActiveModule] = useState<'logo' | 'environment' | 'texture' | 'editor' | 'library' | 'inspector' | 'interface' | 'vfx'>('inspector');
+    const [activeModule, setActiveModule] = useState<'logo' | 'environment' | 'texture' | 'editor' | 'library' | 'inspector' | 'interface' | 'vfx' | 'uv'>('uv');
     const [library, setLibrary] = useState<Asset[]>([]);
 
     const addToLibrary = (asset: Asset) => { setLibrary(prev => [asset, ...prev]); };
@@ -833,12 +1030,13 @@ const App: React.FC = () => {
                     </div>
                     <div className="mb-4">
                         <p className="px-4 text-[10px] font-bold text-gray-600 uppercase tracking-wider mb-2">Production</p>
-                        <SidebarItem icon="🖥️" label="Interface Studio" active={activeModule === 'interface'} onClick={() => setActiveModule('interface')} />
+                        <SidebarItem icon="🎨" label="UV Atelier" active={activeModule === 'uv'} onClick={() => setActiveModule('uv')} />
+                        <SidebarItem icon="👁️" label="Visual Interface" active={activeModule === 'interface'} onClick={() => setActiveModule('interface')} />
                         <SidebarItem icon="⚜️" label="Logo Forge" active={activeModule === 'logo'} onClick={() => setActiveModule('logo')} />
                         <SidebarItem icon="🏔️" label="World Builder" active={activeModule === 'environment'} onClick={() => setActiveModule('environment')} />
                         <SidebarItem icon="🧱" label="Texture Forge" active={activeModule === 'texture'} onClick={() => setActiveModule('texture')} />
                         <SidebarItem icon="💡" label="VFX Lab" active={activeModule === 'vfx'} onClick={() => setActiveModule('vfx')} />
-                        <SidebarItem icon="🎨" label="Asset Editor" active={activeModule === 'editor'} onClick={() => setActiveModule('editor')} />
+                        <SidebarItem icon="🛠️" label="Asset Editor" active={activeModule === 'editor'} onClick={() => setActiveModule('editor')} />
                     </div>
                     <div>
                         <p className="px-4 text-[10px] font-bold text-gray-600 uppercase tracking-wider mb-2">Storage</p>
@@ -856,6 +1054,7 @@ const App: React.FC = () => {
                     {activeModule === 'environment' && <EnvironmentStudio onSave={addToLibrary} />}
                     {activeModule === 'texture' && <TextureForge onSave={addToLibrary} />}
                     {activeModule === 'vfx' && <VFXStudio onSave={addToLibrary} />}
+                    {activeModule === 'uv' && <UVPainter onSave={addToLibrary} />}
                     {activeModule === 'editor' && <AssetEditor onSave={addToLibrary} />}
                     {activeModule === 'library' && <AssetLibrary assets={library} onDelete={deleteFromLibrary} />}
                 </div>
