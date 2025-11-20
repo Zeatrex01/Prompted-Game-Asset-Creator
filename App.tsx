@@ -7,13 +7,15 @@ import {
     analyzeForEngine,
     extractUiStyle,
     generateUiComponent,
+    generateNoiseTexture,
+    generateLightCookie,
     AnalysisReport
 } from './services/geminiService';
 
 // --- Types ---
 interface Asset {
     id: string;
-    type: 'logo' | 'banner' | 'texture' | 'edit' | 'ui' | 'remaster';
+    type: 'logo' | 'banner' | 'texture' | 'edit' | 'ui' | 'remaster' | 'noise' | 'cookie';
     url: string;
     prompt: string;
     createdAt: Date;
@@ -521,7 +523,86 @@ const TextureForge: React.FC<{ onSave: (asset: Asset) => void }> = ({ onSave }) 
     );
 }
 
-// 6. Asset Editor
+// 6. VFX & Lighting Studio
+const VFXStudio: React.FC<{ onSave: (asset: Asset) => void }> = ({ onSave }) => {
+    const [mode, setMode] = useState<'noise' | 'cookie'>('noise');
+    const [selectedType, setSelectedType] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [result, setResult] = useState<string | null>(null);
+
+    // Options
+    const noiseTypes = ["Perlin Noise", "Voronoi / Cellular", "Simplex Noise", "White Noise (Static)", "Value Noise", "Curl Noise", "Caustics Water"];
+    const cookieTypes = ["Venetian Blinds", "Tree Foliage Shadows", "Window Frame (Cross)", "Jail Bars", "Industrial Grate", "Softbox Gradient", "Abstract Caustics", "Flashlight Soft"];
+
+    useEffect(() => {
+        setSelectedType(mode === 'noise' ? noiseTypes[0] : cookieTypes[0]);
+        setResult(null);
+    }, [mode]);
+
+    const handleGenerate = async () => {
+        setLoading(true);
+        try {
+            let url;
+            if (mode === 'noise') url = await generateNoiseTexture(selectedType);
+            else url = await generateLightCookie(selectedType);
+            
+            setResult(url);
+            onSave({ 
+                id: Date.now().toString(), 
+                type: mode, 
+                url, 
+                prompt: `[${mode === 'noise' ? 'Noise' : 'Gobo'}] ${selectedType}`, 
+                createdAt: new Date() 
+            });
+        } catch (e) { alert(e); } 
+        finally { setLoading(false); }
+    };
+
+    return (
+        <div className="flex flex-col lg:flex-row gap-6 h-full">
+            <div className="lg:w-1/3 flex-shrink-0 flex flex-col gap-6 overflow-y-auto pr-2">
+                <div>
+                    <h2 className="text-3xl font-display font-bold text-white mb-2">VFX & Lighting Lab</h2>
+                    <p className="text-gray-400 text-sm">Generate technical maps and light masks.</p>
+                </div>
+                <div className="flex gap-1 bg-gray-900 p-1 rounded-lg">
+                    <button onClick={() => setMode('noise')} className={`flex-1 py-2 text-xs font-bold uppercase rounded transition-all ${mode === 'noise' ? 'bg-fuchsia-600 text-white' : 'text-gray-400 hover:text-white'}`}>Noise Generator</button>
+                    <button onClick={() => setMode('cookie')} className={`flex-1 py-2 text-xs font-bold uppercase rounded transition-all ${mode === 'cookie' ? 'bg-fuchsia-600 text-white' : 'text-gray-400 hover:text-white'}`}>Light Cookies</button>
+                </div>
+                <div className="space-y-4 bg-game-panel p-6 rounded-2xl border border-gray-800 shadow-xl">
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">{mode === 'noise' ? 'Pattern Type' : 'Projection Shape'}</label>
+                        <select value={selectedType} onChange={(e) => setSelectedType(e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-white">
+                            {(mode === 'noise' ? noiseTypes : cookieTypes).map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                    </div>
+                    
+                    <div className="text-xs text-gray-400 p-3 bg-black/20 rounded border border-gray-700">
+                        {mode === 'noise' ? 'Generates seamless, high-contrast grayscale procedural noise maps suitable for shader math, erosion, and particle VFX.' : 'Generates high-contrast Black & White projection textures (Gobos) for Spotlights to create complex shadows.'}
+                    </div>
+
+                    <button onClick={handleGenerate} disabled={loading} className="w-full py-4 bg-gradient-to-r from-fuchsia-600 to-purple-600 rounded-lg font-display font-bold text-white shadow-lg disabled:opacity-50">
+                        {loading ? <Spinner /> : 'GENERATE ASSET'}
+                    </button>
+                </div>
+            </div>
+            
+            <div className="lg:w-2/3 bg-black/40 rounded-2xl border border-gray-800 flex items-center justify-center min-h-[400px]">
+                 {result ? (
+                    <div className="relative flex flex-col items-center">
+                         <img src={result} className={`max-w-[500px] rounded shadow-2xl border border-gray-700 ${mode === 'cookie' ? 'bg-black' : ''}`} alt="VFX Asset" />
+                         <div className="mt-4 flex gap-4">
+                            <a href={result} download={`vfx-${Date.now()}.jpg`} className="px-4 py-2 bg-fuchsia-600 rounded font-bold text-white hover:bg-fuchsia-500">Download Map</a>
+                         </div>
+                    </div>
+                ) : <div className="text-center opacity-30"><div className="text-8xl mb-4">💡</div><p className="font-display text-2xl tracking-widest">LABORATORY IDLE</p></div>}
+            </div>
+        </div>
+    );
+}
+
+
+// 7. Asset Editor
 const AssetEditor: React.FC<{ onSave: (asset: Asset) => void }> = ({ onSave }) => {
     const [image, setImage] = useState<File | null>(null);
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -584,7 +665,7 @@ const AssetEditor: React.FC<{ onSave: (asset: Asset) => void }> = ({ onSave }) =
     );
 }
 
-// 7. Asset Library (Standard)
+// 8. Asset Library (Standard)
 const AssetLibrary: React.FC<{ assets: Asset[], onDelete: (id: string) => void }> = ({ assets, onDelete }) => {
     return (
         <div className="h-full flex flex-col">
@@ -613,7 +694,7 @@ const AssetLibrary: React.FC<{ assets: Asset[], onDelete: (id: string) => void }
 // --- Main Layout ---
 
 const App: React.FC = () => {
-    const [activeModule, setActiveModule] = useState<'logo' | 'environment' | 'texture' | 'editor' | 'library' | 'inspector' | 'interface'>('inspector');
+    const [activeModule, setActiveModule] = useState<'logo' | 'environment' | 'texture' | 'editor' | 'library' | 'inspector' | 'interface' | 'vfx'>('inspector');
     const [library, setLibrary] = useState<Asset[]>([]);
 
     const addToLibrary = (asset: Asset) => { setLibrary(prev => [asset, ...prev]); };
@@ -638,6 +719,7 @@ const App: React.FC = () => {
                         <SidebarItem icon="⚜️" label="Logo Forge" active={activeModule === 'logo'} onClick={() => setActiveModule('logo')} />
                         <SidebarItem icon="🏔️" label="World Builder" active={activeModule === 'environment'} onClick={() => setActiveModule('environment')} />
                         <SidebarItem icon="🧱" label="Texture Forge" active={activeModule === 'texture'} onClick={() => setActiveModule('texture')} />
+                        <SidebarItem icon="💡" label="VFX Lab" active={activeModule === 'vfx'} onClick={() => setActiveModule('vfx')} />
                         <SidebarItem icon="🎨" label="Asset Editor" active={activeModule === 'editor'} onClick={() => setActiveModule('editor')} />
                     </div>
                     <div>
@@ -655,6 +737,7 @@ const App: React.FC = () => {
                     {activeModule === 'logo' && <LogoStudio onSave={addToLibrary} />}
                     {activeModule === 'environment' && <EnvironmentStudio onSave={addToLibrary} />}
                     {activeModule === 'texture' && <TextureForge onSave={addToLibrary} />}
+                    {activeModule === 'vfx' && <VFXStudio onSave={addToLibrary} />}
                     {activeModule === 'editor' && <AssetEditor onSave={addToLibrary} />}
                     {activeModule === 'library' && <AssetLibrary assets={library} onDelete={deleteFromLibrary} />}
                 </div>

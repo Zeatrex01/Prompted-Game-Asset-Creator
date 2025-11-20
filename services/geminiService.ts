@@ -50,15 +50,24 @@ const enhancePrompt = async (userPrompt: string, context: string, specificDetail
 
 export const generateProfessionalAsset = async (
     userPrompt: string, 
-    assetType: 'logo' | 'banner' | 'texture' | 'ui',
+    assetType: 'logo' | 'banner' | 'texture' | 'ui' | 'cookie' | 'noise',
     styleProfile: string,
     aspectRatio: string = '1:1'
 ): Promise<string> => {
     
+    let specificConstraints = `Ensure the asset is high-resolution.`;
+    
+    if (assetType === 'logo') specificConstraints += " Vector style, clean lines, iconic.";
+    if (assetType === 'texture') specificConstraints += " Seamless, tileable, PBR material, flat lighting.";
+    if (assetType === 'banner') specificConstraints += " Cinematic, atmospheric, highly detailed environment.";
+    if (assetType === 'ui') specificConstraints += " Isolatable elements on plain background, user interface design.";
+    if (assetType === 'noise') specificConstraints += " Grayscale heightmap, high contrast, mathematical procedural pattern, flat lighting, no shading, 4k resolution. Suitable for VFX shaders.";
+    if (assetType === 'cookie') specificConstraints += " High contrast Black and White only (Gobo). Pure black background (blocks light), White shapes (allows light). Sharp defined edges for shadow projection. No greyscale unless specified for softness.";
+
     const enhancedPrompt = await enhancePrompt(
         userPrompt,
         `Generating a professional ${assetType} for a video game. Style goal: ${styleProfile}.`,
-        `Ensure the asset is high-resolution. For logos: vector style. For textures: seamless, tileable. For banners: cinematic. For UI: isolatable elements on plain background.`
+        specificConstraints
     );
 
     console.log(`[Art Director] Enhanced Prompt: ${enhancedPrompt}`);
@@ -244,4 +253,16 @@ export const editGameAsset = async (image: File, mask: File | null, instruction:
     }
     
     throw new Error("Edit generation failed.");
+};
+
+// --- VFX & Tech Art Services ---
+
+export const generateNoiseTexture = async (noiseType: string): Promise<string> => {
+    const prompt = `Seamless tileable ${noiseType} noise texture. Technical requirements: Grayscale heightmap, high contrast, mathematical procedural pattern, flat lighting, no shading, 4k resolution. Suitable for VFX shaders and displacement maps.`;
+    return generateProfessionalAsset(prompt, 'noise', 'Procedural Math', '1:1');
+};
+
+export const generateLightCookie = async (cookieType: string): Promise<string> => {
+    const prompt = `Light cookie texture (gobo) pattern: ${cookieType}. Technical requirements: High contrast Black and White only. Pure black background (blocks light), White shapes (allows light). Sharp defined edges for shadow projection. Viewed from front, flat projection.`;
+    return generateProfessionalAsset(prompt, 'cookie', 'Light Cookie / Gobo', '1:1');
 };
