@@ -1,12 +1,32 @@
-
 <!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Gemini Game Asset Creator</title>
+    <title>Gemini Game Asset Studio</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+              display: ['Rajdhani', 'sans-serif'],
+            },
+            colors: {
+              'game-dark': '#0b0c15',
+              'game-panel': '#151621',
+              'game-accent': '#6366f1',
+              'game-accent-hover': '#4f46e5',
+            }
+          }
+        }
+      }
+    </script>
   <script type="importmap">
 {
   "imports": {
@@ -18,8 +38,8 @@
 }
 </script>
 </head>
-  <body class="bg-gray-900">
-    <div id="root"></div>
+  <body class="bg-game-dark text-white h-screen overflow-hidden">
+    <div id="root" class="h-full"></div>
     <script type="module" src="/index.tsx"></script>
   </body>
 </html>
